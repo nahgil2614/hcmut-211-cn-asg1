@@ -9,6 +9,9 @@ CACHE_FILE_NAME = "cache-"
 CACHE_FILE_EXT = ".jpg"
 
 #NOTE: rmb to close rtsp socket
+#NOTE: how to handle the end of the video
+#NOTE: implement a buffer (queue)
+#NOTE: what if the packets are lost? (currently assuming no losses)
 
 class Client:
     INIT = 0
@@ -20,6 +23,7 @@ class Client:
     PLAY = 1
     PAUSE = 2
     TEARDOWN = 3
+    DESCRIBE = 4
 
     TORNDOWN = False
     
@@ -38,45 +42,75 @@ class Client:
         self.teardownAcked = 0 #NOTE: what is it?
         self.connectToServer()
         self.frameNbr = 0
+        self.totalFrameNbr = 0
+        # width and height of the video
+        self.width = 0
+        self.height = 0
+        # SETUP is mandatory in an RTSP interaction
+        self.setupMovie()
         
     # THIS GUI IS JUST FOR REFERENCE ONLY, STUDENTS HAVE TO CREATE THEIR OWN GUI     
     def createWidgets(self):
-        """Build GUI."""
-        # Create Setup button
-        self.setup = Button(self.master, width=20, padx=3, pady=3)
-        self.setup["text"] = "Setup"
-        self.setup["command"] = self.setupMovie
-        self.setup.grid(row=1, column=0, padx=2, pady=2)
+        """Build GUI."""        
+        # Create a label to display the movie
+        self.label = Label(self.master, height=19)
+        self.label.grid(row=0, column=0, columnspan=4, sticky=W+E+N+S, padx=5, pady=5) 
         
+        # self.text = Text(self.master, height=10)
+        # self.text.grid(row=0, column=0, sticky='ns')
+        # # Create the scrollbar
+        # self.scrollbar = Scrollbar(self.master, orient=HORIZONTAL)
+        # self.scrollbar["command"] = self.text.xview
+        # self.scrollbar.grid(row=1, column=0, columnspan=3, padx=2, pady=2, sticky='ew')
+
+        # self.text['xscrollcommand'] = self.scrollbar.set
+
+        # Create a label to display the total and remaining time
+        self.time = Label(self.master, width=20, padx=3, pady=3)
+        self.time["text"] = "00:00 / 00:00"
+        self.time.grid(row=1, column=3, padx=2, pady=2)
+
+        # Create Describe button        
+        self.describe = Button(self.master, width=20, padx=3, pady=3)
+        self.describe["text"] = "Describe"
+        self.describe["command"] = self.describeMovie
+        self.describe.grid(row=2, column=0, padx=2, pady=2)
+
         # Create Play button        
         self.start = Button(self.master, width=20, padx=3, pady=3)
         self.start["text"] = "Play"
         self.start["command"] = self.playMovie
-        self.start.grid(row=1, column=1, padx=2, pady=2)
+        self.start.grid(row=2, column=1, padx=2, pady=2)
         
         # Create Pause button            
         self.pause = Button(self.master, width=20, padx=3, pady=3)
         self.pause["text"] = "Pause"
         self.pause["command"] = self.pauseMovie
-        self.pause.grid(row=1, column=2, padx=2, pady=2)
+        self.pause.grid(row=2, column=2, padx=2, pady=2)
         
         # Create Teardown button
         self.teardown = Button(self.master, width=20, padx=3, pady=3)
         self.teardown["text"] = "Teardown"
         self.teardown["command"] =  self.exitClient
-        self.teardown.grid(row=1, column=3, padx=2, pady=2)
-        
-        # Create a label to display the movie
-        self.label = Label(self.master, height=19)
-        self.label.grid(row=0, column=0, columnspan=4, sticky=W+E+N+S, padx=5, pady=5) 
+        self.teardown.grid(row=2, column=3, padx=2, pady=2)
     
     def setupMovie(self):
-        """Setup button handler."""
-        if not self.TORNDOWN and self.state == self.INIT:
-            self.sendRtspRequest(self.SETUP)
+        """Setup function handler."""
+        self.sendRtspRequest(self.SETUP)
+        data = self.recvRtspReply()
+        if self.parseRtspReply(data):
+            self.state = self.READY
+        self.label.update()
+        ratio = min(self.label.winfo_width()/self.width, self.label.winfo_height()/self.height)
+        self.width = int(self.width * ratio)
+        self.height = int(self.height * ratio)
+
+    def describeMovie(self):
+        """Describe function handler."""
+        if not self.TORNDOWN:
+            self.sendRtspRequest(self.DESCRIBE)
             data = self.recvRtspReply()
-            if self.parseRtspReply(data):
-                self.state = self.READY
+            self.parseRtspReply(data)
     
     def playMovie(self):
         """Play button handler."""
@@ -116,7 +150,7 @@ class Client:
         """Listen for RTP packets."""
         while True:
             try:
-                data, _ = self.rtpSocket.recvfrom(2 << 15)
+                data, _ = self.rtpSocket.recvfrom(1 << 16)
                 assert(data)
             except: # timeout
                 self.rtpSocket.close()
@@ -126,7 +160,7 @@ class Client:
             self.frameNbr += 1
             packet = RtpPacket()
             packet.decode(data)
-            assert(packet.seqNum() == self.frameNbr)
+            assert(packet.seqNum() == self.frameNbr) #NOTE: try-except right here to count number of errors ...
             frame = packet.getPayload()
             imageFile = self.writeFrame(frame)
             self.updateMovie(imageFile)
@@ -142,10 +176,16 @@ class Client:
     def updateMovie(self, imageFile):
         """Update the image file as video frame in the GUI."""
         image = Image.open(imageFile)
+        image = image.resize((self.width, self.height), Image.ANTIALIAS)
         photo = ImageTk.PhotoImage(image)
         self.label = Label(self.master, height=19, image=photo)
         self.label.image = photo
         self.label.grid(row=0, column=0, columnspan=4, sticky=W+E+N+S, padx=5, pady=5) 
+
+        # Update the total and remaining time
+        self.time = Label(self.master, width=20, padx=3, pady=3)
+        self.time["text"] = self.sec2time(int((self.totalFrameNbr - self.frameNbr) * 0.05)) + ' / ' + self.sec2time(int(self.totalFrameNbr * 0.05))
+        self.time.grid(row=1, column=3, padx=2, pady=2)
         
     def connectToServer(self):
         """Connect to the Server. Start a new RTSP/TCP session."""
@@ -171,6 +211,11 @@ class Client:
             msg = 'TEARDOWN ' + self.fileName + ' RTSP/1.0\n' +\
                   'CSeq: ' + str(self.rtspSeq) + '\n' +\
                   'Session: ' + str(self.sessionId)
+        elif requestCode == self.DESCRIBE:
+            msg = 'DESCRIBE RTSP/1.0\n' +\
+                  'CSeq: ' + str(self.rtspSeq) + '\n' +\
+                  'Session: ' + str(self.sessionId)
+
         self.rtspSocket.send(msg.encode())
     
     def recvRtspReply(self):
@@ -192,9 +237,18 @@ class Client:
             assert(int(reply[2][1]) == self.sessionId)
         except:
             self.rtspSocket.close()
-            print('False')
             return False
-        print('True')
+
+        if len(reply) == 4:
+            if reply[3][0] == 'Description:':
+                msg = 'Stream types: ' + reply[3][1] + '\n'\
+                      'Encoding: ' + reply[3][2]
+                tkinter.messagebox.showinfo('Session description', msg)
+            elif reply[3][0] == 'Info:':
+                self.totalFrameNbr = int(reply[3][1])
+                self.width = int(reply[3][2])
+                self.height = int(reply[3][3])
+
         return True
     
     def openRtpPort(self):
@@ -211,3 +265,6 @@ class Client:
         if tkinter.messagebox.askokcancel("Quit", "Do you want to quit?"):
             self.rtspSocket.close()
             self.master.destroy()
+
+    def sec2time(self, sec): # assuming the length is always < 1 hour
+        return str(sec//60).rjust(2,'0') + ':' + str(sec%60).rjust(2,'0')
