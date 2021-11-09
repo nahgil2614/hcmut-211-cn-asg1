@@ -23,7 +23,7 @@ class VideoStream: #Mjpeg only
 
 			# Read the size
 			size = Image.open(BytesIO(data)).size
-		return size
+		return size, data
 
 	def nextFrame(self):
 		"""Get next frame."""
@@ -34,6 +34,18 @@ class VideoStream: #Mjpeg only
 			# Read the current frame
 			data = self.file.read(framelength)
 			self.frameNum += 1
+		return data
+
+	def getFrame(self, pos, num):
+		"""Get a frame at pos."""
+		self.file.seek(pos)
+		self.frameNum = num
+		data = self.file.read(5) # Get the framelength from the first 5 bytes
+		if data:
+			framelength = int(data)
+							
+			# Read the current frame
+			data = self.file.read(framelength)
 		return data
 		
 	def frameNbr(self):

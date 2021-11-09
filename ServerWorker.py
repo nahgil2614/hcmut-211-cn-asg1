@@ -26,6 +26,7 @@ class ServerWorker:
     
     def __init__(self, clientInfo):
         self.clientInfo = clientInfo
+        self.framePos = [0]
         
     def run(self):
         threading.Thread(target=self.recvRtspRequest).start()
@@ -41,9 +42,6 @@ class ServerWorker:
                 if not self.processRtspRequest(data.decode("utf-8")):
                     connSocket.close()
                     break
-            #NOTE: return from the unused thread
-            else:
-                break
     
     def processRtspRequest(self, data):
         """Process RTSP request sent from the client."""
@@ -67,10 +65,12 @@ class ServerWorker:
                 try:
                     video = VideoStream(filename)
                     # retrieve the size
-                    size = video.getSize()
+                    size, data = video.getSize()
                     # calculate the total number of frames
-                    while video.nextFrame():
-                        pass
+                    while data:
+                        self.framePos.append(self.framePos[~0]+5+len(data))
+                        data = video.nextFrame()
+
                     totalFrameNbr = video.frameNbr()
                     self.clientInfo['videoStream'] = VideoStream(filename)
                     self.state = self.READY
@@ -98,6 +98,7 @@ class ServerWorker:
             if self.state == self.READY:
                 print("processing PLAY\n")
                 self.state = self.PLAYING
+                num = int(request[3].split(' ')[1])
                 
                 # Create a new socket for RTP/UDP
                 self.clientInfo["rtpSocket"] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -106,7 +107,16 @@ class ServerWorker:
                 
                 # Create a new thread and start sending RTP packets
                 self.clientInfo['event'] = threading.Event()
-                self.clientInfo['worker']= threading.Thread(target=self.sendRtp) 
+                self.clientInfo['worker']= threading.Thread(target=self.sendRtp, args=(num,))
+                self.clientInfo['worker'].start()
+
+            elif self.state == self.PLAYING: # the scrollbar
+                num = int(request[3].split(' ')[1])
+                #self.replyRtsp(self.OK_200, seq[1]) # currently no reply yet
+
+                self.clientInfo['event'].set()
+                self.clientInfo['event'] = threading.Event()
+                self.clientInfo['worker']= threading.Thread(target=self.sendRtp, args=(num,))
                 self.clientInfo['worker'].start()
         
         # Process PAUSE request
@@ -136,27 +146,42 @@ class ServerWorker:
 
         return True
             
-    def sendRtp(self):
+    def sendRtp(self, num):
         """Send RTP packets over UDP."""
+        address = self.clientInfo['rtspSocket'][1][0]
+        port = int(self.clientInfo['rtpPort'])
+
+        self.clientInfo['event'].wait(0.05)
+            
+        # Stop sending if request is PAUSE or TEARDOWN
+        if self.clientInfo['event'].isSet():
+            return 
+        
+        print(str(num) + ', ' + str(self.framePos[num]))
+        data = self.clientInfo['videoStream'].getFrame(self.framePos[num], num)
+        if data:
+            try:
+                self.clientInfo['rtpSocket'].sendto(self.makeRtp(data, num),(address,port))
+            except:
+                print("Connection Error")
+        #NOTE: end the finished video
+        else:
+            return
+
         while True:
             self.clientInfo['event'].wait(0.05) 
             
             # Stop sending if request is PAUSE or TEARDOWN
-            if self.clientInfo['event'].isSet(): 
+            if self.clientInfo['event'].isSet():
                 break 
-                
-            data = self.clientInfo['videoStream'].nextFrame()
-            if data: 
-                frameNumber = self.clientInfo['videoStream'].frameNbr()
+            
+            num += 1
+            data = self.clientInfo['videoStream'].getFrame(self.framePos[num], num)
+            if data:
                 try:
-                    address = self.clientInfo['rtspSocket'][1][0]
-                    port = int(self.clientInfo['rtpPort'])
-                    self.clientInfo['rtpSocket'].sendto(self.makeRtp(data, frameNumber),(address,port))
+                    self.clientInfo['rtpSocket'].sendto(self.makeRtp(data, num),(address,port))
                 except:
                     print("Connection Error")
-                    #print('-'*60)
-                    #traceback.print_exc(file=sys.stdout)
-                    #print('-'*60)
             #NOTE: end the finished video
             else:
                 break

@@ -31,6 +31,8 @@ class Client:
     def __init__(self, master, serveraddr, serverport, rtpport, filename):
         self.master = master
         self.master.protocol("WM_DELETE_WINDOW", self.handler)
+        self.frameNbr = IntVar()
+        self.totalFrameNbr = 0
         self.createWidgets()
         self.serverAddr = serveraddr
         self.serverPort = int(serverport)
@@ -41,8 +43,6 @@ class Client:
         self.requestSent = -1 #NOTE: what is it?
         self.teardownAcked = 0 #NOTE: what is it?
         self.connectToServer()
-        self.frameNbr = 0
-        self.totalFrameNbr = 0
         # width and height of the video
         self.width = 0
         self.height = 0
@@ -54,16 +54,7 @@ class Client:
         """Build GUI."""        
         # Create a label to display the movie
         self.label = Label(self.master, height=19)
-        self.label.grid(row=0, column=0, columnspan=4, sticky=W+E+N+S, padx=5, pady=5) 
-        
-        # self.text = Text(self.master, height=10)
-        # self.text.grid(row=0, column=0, sticky='ns')
-        # # Create the scrollbar
-        # self.scrollbar = Scrollbar(self.master, orient=HORIZONTAL)
-        # self.scrollbar["command"] = self.text.xview
-        # self.scrollbar.grid(row=1, column=0, columnspan=3, padx=2, pady=2, sticky='ew')
-
-        # self.text['xscrollcommand'] = self.scrollbar.set
+        self.label.grid(row=0, column=0, columnspan=4, sticky=W+E+N+S, padx=5, pady=5)
 
         # Create a label to display the total and remaining time
         self.time = Label(self.master, width=20, padx=3, pady=3)
@@ -104,6 +95,26 @@ class Client:
         ratio = min(self.label.winfo_width()/self.width, self.label.winfo_height()/self.height)
         self.width = int(self.width * ratio)
         self.height = int(self.height * ratio)
+
+        # Create the scrollbar
+        def scroll(_):
+            if not self.TORNDOWN:
+                if self.state == self.PLAYING:
+                    self.sendRtspRequest(self.PAUSE)
+                    data = self.recvRtspReply()
+                    self.parseRtspReply(data)
+                self.sendRtspRequest(self.PLAY)
+                data = self.recvRtspReply()
+                self.parseRtspReply(data)
+                if self.state == self.READY:
+                    self.sendRtspRequest(self.PAUSE)
+                    data = self.recvRtspReply()
+                    self.parseRtspReply(data)
+
+        self.scrollbar = Scale(self.master, from_=0, to=self.totalFrameNbr, length=400, orient=HORIZONTAL, showvalue=0, sliderlength=10, variable=self.frameNbr)
+        self.scrollbar["command"] = scroll
+        self.scrollbar.set(0)
+        self.scrollbar.grid(row=1, column=0, columnspan=3, padx=2, pady=2)
 
     def describeMovie(self):
         """Describe function handler."""
@@ -157,17 +168,17 @@ class Client:
                 os.remove(imageFile)
                 break
             # packet received sucessfully
-            self.frameNbr += 1
+            self.frameNbr.set(self.frameNbr.get()+1)
             packet = RtpPacket()
             packet.decode(data)
-            assert(packet.seqNum() == self.frameNbr) #NOTE: try-except right here to count number of errors ...
+            #assert(packet.seqNum() == self.frameNbr.get()) #NOTE: try-except right here to count number of errors ...
             frame = packet.getPayload()
             imageFile = self.writeFrame(frame)
             self.updateMovie(imageFile)
                     
     def writeFrame(self, data):
         """Write the received frame to a temp image file. Return the image file."""
-        imageFile = CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
+        imageFile = 'cache\\' + CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
         file = open(imageFile, 'wb')
         file.write(data)
         file.close()
@@ -184,7 +195,7 @@ class Client:
 
         # Update the total and remaining time
         self.time = Label(self.master, width=20, padx=3, pady=3)
-        self.time["text"] = self.sec2time(int((self.totalFrameNbr - self.frameNbr) * 0.05)) + ' / ' + self.sec2time(int(self.totalFrameNbr * 0.05))
+        self.time["text"] = self.sec2time(int((self.totalFrameNbr - self.frameNbr.get()) * 0.05)) + ' / ' + self.sec2time(int(self.totalFrameNbr * 0.05))
         self.time.grid(row=1, column=3, padx=2, pady=2)
         
     def connectToServer(self):
@@ -202,7 +213,8 @@ class Client:
         elif requestCode == self.PLAY:
             msg = 'PLAY ' + self.fileName + ' RTSP/1.0\n' +\
                   'CSeq: ' + str(self.rtspSeq) + '\n' +\
-                  'Session: ' + str(self.sessionId)
+                  'Session: ' + str(self.sessionId) + '\n' +\
+                  'Frame: ' + str(self.frameNbr.get())
         elif requestCode == self.PAUSE:
             msg = 'PAUSE ' + self.fileName + ' RTSP/1.0\n' +\
                   'CSeq: ' + str(self.rtspSeq) + '\n' +\
