@@ -13,9 +13,10 @@ if __name__ == "__main__":
 		sys.exit() #NOTE: no need to continue
 	
 	root = Tk()
+	root.config(background="white")
 	
 	# Create a new client
 	app = Client(root, serverAddr, serverPort, rtpPort, fileName)
-	app.master.title("RTPClient")	
+	app.master.title("Now streaming " + fileName + "...")
 	root.mainloop()
 	

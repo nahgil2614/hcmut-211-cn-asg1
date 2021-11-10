@@ -1,5 +1,5 @@
 from random import randint
-import sys, traceback, threading, socket
+import sys, traceback, threading, socket, os
 
 from VideoStream import VideoStream
 from RtpPacket import RtpPacket
@@ -12,11 +12,12 @@ class ServerWorker:
     PAUSE = 'PAUSE'
     TEARDOWN = 'TEARDOWN'
     DESCRIBE = 'DESCRIBE'
+    SWITCH = 'SWITCH'
     
     INIT = 0
     READY = 1
     PLAYING = 2
-    state = INIT
+    SWITCHING = 3
 
     OK_200 = 0
     FILE_NOT_FOUND_404 = 1
@@ -25,6 +26,7 @@ class ServerWorker:
     clientInfo = {}
     
     def __init__(self, clientInfo):
+        self.state = self.INIT
         self.clientInfo = clientInfo
         self.framePos = [0]
         
@@ -58,10 +60,12 @@ class ServerWorker:
         
         # Process SETUP request
         if requestType == self.SETUP:
-            if self.state == self.INIT:
+            if self.state == self.INIT or self.state == self.SWITCHING:
                 # Update state
                 print("processing SETUP\n")
-                
+                if self.state == self.SWITCHING:
+                    self.framePos.clear()
+                    self.framePos = [0]
                 try:
                     video = VideoStream(filename)
                     # retrieve the size
@@ -73,7 +77,6 @@ class ServerWorker:
 
                     totalFrameNbr = video.frameNbr()
                     self.clientInfo['videoStream'] = VideoStream(filename)
-                    self.state = self.READY
                 except IOError:
                     self.replyRtsp(self.FILE_NOT_FOUND_404, seq[1])
                     #NOTE: close the connection when there are errors
@@ -81,8 +84,12 @@ class ServerWorker:
                     connSocket.close()
                 
                 # Generate a randomized RTSP session ID
-                self.clientInfo['session'] = randint(100000, 999999)
+                if self.state == self.INIT:
+                    self.clientInfo['session'] = randint(100000, 999999)
                 
+                # Update the state
+                self.state = self.READY
+
                 # Send RTSP reply
                 self.replyRtsp(self.OK_200, seq[1], info=(totalFrameNbr,size))
                 
@@ -91,11 +98,13 @@ class ServerWorker:
         
         # Process DESCRIBE request
         elif requestType == self.DESCRIBE:
+            assert(int(request[2].split(' ')[1]) == self.clientInfo['session'])
             self.replyRtsp(self.OK_200, seq[1], describe=True)
 
         # Process PLAY request         
         elif requestType == self.PLAY:
-            if self.state == self.READY:
+            assert(int(request[2].split(' ')[1]) == self.clientInfo['session'])
+            if self.state == self.READY or self.state == self.SWITCHING: # SWITCHING back to the original movie
                 print("processing PLAY\n")
                 self.state = self.PLAYING
                 num = int(request[3].split(' ')[1])
@@ -121,6 +130,7 @@ class ServerWorker:
         
         # Process PAUSE request
         elif requestType == self.PAUSE:
+            assert(int(request[2].split(' ')[1]) == self.clientInfo['session'])
             if self.state == self.PLAYING:
                 print("processing PAUSE\n")
                 self.state = self.READY
@@ -131,6 +141,7 @@ class ServerWorker:
         
         # Process TEARDOWN request
         elif requestType == self.TEARDOWN:
+            assert(int(request[2].split(' ')[1]) == self.clientInfo['session'])
             if self.state == self.READY or self.state == self.PLAYING:
                 print("processing TEARDOWN\n")
                 try: #NOTE: SETUP -> TEARDOWN : exception
@@ -144,6 +155,20 @@ class ServerWorker:
                 # close the connection socket
                 return False
 
+        # Process SWITCH request
+        elif requestType == self.SWITCH:
+            assert(int(request[2].split(' ')[1]) == self.clientInfo['session'])
+            if self.state == self.READY or self.state == self.PLAYING:
+                print("processing SWITCH\n")
+                self.state = self.SWITCHING
+                
+                try:
+                    self.clientInfo['event'].set()
+                except:
+                    pass
+            
+                self.replyRtsp(self.OK_200, seq[1], switch=True)
+
         return True
             
     def sendRtp(self, num):
@@ -151,7 +176,9 @@ class ServerWorker:
         address = self.clientInfo['rtspSocket'][1][0]
         port = int(self.clientInfo['rtpPort'])
 
-        self.clientInfo['event'].wait(0.05)
+        #since we're using UDP, there is no need to wait
+        #just send as fast as we can (can lose some packets, but it's ok)
+        #self.clientInfo['event'].wait(0.05)
             
         # Stop sending if request is PAUSE or TEARDOWN
         if self.clientInfo['event'].isSet():
@@ -203,7 +230,7 @@ class ServerWorker:
         
         return rtpPacket.getPacket()
         
-    def replyRtsp(self, code, seq, describe=False, info=(0,())):
+    def replyRtsp(self, code, seq, describe=False, info=(0,()), switch=False):
         """Send RTSP reply to the client."""
         connSocket = self.clientInfo['rtspSocket'][0]
 
@@ -216,6 +243,9 @@ class ServerWorker:
                 reply += '\nDescription: <kinds_of_streams> <encoding>'
             elif info[0]:
                 reply += '\nInfo: ' + str(info[0]) + ' ' + str(info[1][0]) + ' ' + str(info[1][1])
+            elif switch:
+                movies = [file for file in os.listdir() if file.endswith('.Mjpeg')]
+                reply += '\nMovies: ' + ' '.join(movies)
         
         # Error messages
         #NOTE: server always reply to client
