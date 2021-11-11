@@ -181,7 +181,7 @@ class ServerWorker:
         """Send RTP packets over UDP."""
         address = self.clientInfo['rtspSocket'][1][0]
         port = int(self.clientInfo['rtpPort'])
-        
+
         while True:
             self.clientInfo['event'].wait(0.05) 
             
