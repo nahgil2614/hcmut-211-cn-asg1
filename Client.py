@@ -141,41 +141,36 @@ class Client:
 
                 def spress(event):
                     if not self.TORNDOWN:
-                        self.scrollbar["variable"] = 0
-                        self.scrollbar.set(self.frameNbr.get())
                         self.openRtpPort(None)
+                        self.interrupt.clear()
                         self.worker = threading.Thread(target=self.listenRtp)
                         self.worker.start()
 
-                        if self.state == self.PLAYING:
-                            self.sendRtspRequest(self.PAUSE)
-                            data = self.recvRtspReply()
-                            self.parseRtspReply(data)
-                            # buttons' states
-                            if self.playPause["state"] == DISABLED:
-                                self.playPause["state"] = NORMAL
+                        self.sendRtspRequest(self.PAUSE, timeout='0')
+                        data = self.recvRtspReply()
+                        self.parseRtspReply(data)
 
                 def scroll(event):
                     if not self.TORNDOWN:
-                        self.sendRtspRequest(self.PLAY, timeout=False)
+                        self.sendRtspRequest(self.PLAY, timeout='0')
                         data = self.recvRtspReply()
                         self.parseRtspReply(data)
                 
                 def srelease(event):
                     if not self.TORNDOWN:
-                        self.frameNbr.set(self.scrollbar.get())
-                        self.scrollbar["variable"] = self.frameNbr
                         if self.state == self.READY:
-                            self.sendRtspRequest(self.PAUSE, timeout=False)
-                            data = self.recvRtspReply()
-                            self.parseRtspReply(data)
-                            # buttons' states
-                            if self.playPause["state"] == DISABLED:
-                                self.playPause["state"] = NORMAL
-
-                            self.rtpSocket.shutdown(socket.SHUT_RDWR)
-                            self.rtpSocket.close()
-                        elif self.state == self.PLAYING:
+                            self.sendRtspRequest(self.PAUSE, timeout='1')
+                        elif self.state == self.PLAYING: # the become READY on the server
+                            self.sendRtspRequest(self.PAUSE, timeout='2')
+                        data = self.recvRtspReply()
+                        self.parseRtspReply(data)
+                        self.rtpSocket.shutdown(socket.SHUT_RDWR)
+                        self.rtpSocket.close()
+                        # buttons' states
+                        if self.playPause["state"] == DISABLED:
+                            self.playPause["state"] = NORMAL
+                            
+                        if self.state == self.PLAYING:
                             self.state = self.READY
                             self.playMovie()
 
@@ -316,16 +311,21 @@ class Client:
             if self.interrupt.isSet():
                 break
 
+            exc = False
             try:
                 data, _ = self.rtpSocket.recvfrom(1 << 16)
                 assert(data)
             except: # timeout
                 self.rtpSocket.close()
+                exc = True
+
+            if exc:
                 try:
                     os.remove(imageFile)
                 except:
                     pass
                 break
+
             # packet received sucessfully
             packet = RtpPacket()
             packet.decode(data)
@@ -366,7 +366,7 @@ class Client:
         self.rtspSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.rtspSocket.connect((self.serverAddr, self.serverPort))
 
-    def sendRtspRequest(self, requestCode, timeout=True):
+    def sendRtspRequest(self, requestCode, timeout=''):
         """Send RTSP request to the server.""" 
         self.rtspSeq += 1
         if requestCode == self.SETUP:
@@ -395,8 +395,8 @@ class Client:
                   'CSeq: ' + str(self.rtspSeq) + '\n' +\
                   'Session: ' + str(self.sessionId)
 
-        if not timeout:
-            msg += '\nChangeState: No'
+        if timeout:
+            msg += '\nTimeout: ' + timeout
 
         self.rtspSocket.send(msg.encode())
 

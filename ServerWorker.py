@@ -104,41 +104,46 @@ class ServerWorker:
         # Process PLAY request         
         elif requestType == self.PLAY:
             assert(int(request[2].split(' ')[1]) == self.clientInfo['session'])
-            if self.state == self.READY or self.state == self.SWITCHING: # SWITCHING back to the original movie
+            if len(request) == 5 or self.state == self.READY or self.state == self.SWITCHING: # SWITCHING back to the original movie
                 print("processing PLAY\n")
+                num = int(request[3].split(' ')[1])
+                self.replyRtsp(self.OK_200, seq[1])
+
                 if len(request) == 4:
                     self.state = self.PLAYING
-                num = int(request[3].split(' ')[1])
-                
-                # Create a new socket for RTP/UDP
-                self.clientInfo["rtpSocket"] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                
-                self.replyRtsp(self.OK_200, seq[1])
-                
-                # Create a new thread and start sending RTP packets
-                self.clientInfo['event'] = threading.Event()
-                self.clientInfo['worker']= threading.Thread(target=self.sendRtp, args=(num,))
-                self.clientInfo['worker'].start()
 
-            elif self.state == self.PLAYING: # the scrollbar
-                num = int(request[3].split(' ')[1])
-                #self.replyRtsp(self.OK_200, seq[1]) # currently no reply yet
+                    # Create a new socket for RTP/UDP
+                    self.clientInfo["rtpSocket"] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    
+                    # Create a new thread and start sending RTP packets
+                    self.clientInfo['event'] = threading.Event()
+                    self.clientInfo['worker'] = threading.Thread(target=self.sendRtp, args=(num,))
+                    self.clientInfo['worker'].start()
 
-                self.clientInfo['event'].set()
-                self.clientInfo['event'] = threading.Event()
-                self.clientInfo['worker']= threading.Thread(target=self.sendRtp, args=(num,))
-                self.clientInfo['worker'].start()
+                else: # the scrollbar
+                    self.scrollFrameNbr = num
+                    self.frameReceived.set()
         
         # Process PAUSE request
         elif requestType == self.PAUSE:
             assert(int(request[2].split(' ')[1]) == self.clientInfo['session'])
-            if self.state == self.PLAYING:
+            if len(request) == 4 or self.state == self.PLAYING:
                 print("processing PAUSE\n")
-                self.state = self.READY
-                
                 self.clientInfo['event'].set()
-            
                 self.replyRtsp(self.OK_200, seq[1])
+
+                if len(request) != 4:
+                    self.state = self.READY
+                elif request[3].split(' ')[1] == '0':
+                    self.clientInfo['event'] = threading.Event()
+                    self.frameReceived = threading.Event()
+                    self.clientInfo['worker'] = threading.Thread(target=self.scrollSendRtp)
+                    self.clientInfo['worker'].start()
+                elif request[3].split(' ')[1] == '1':
+                    self.frameReceived.set()
+                elif request[3].split(' ')[1] == '2':
+                    self.frameReceived.set()
+                    self.state = self.READY
         
         # Process TEARDOWN request
         elif requestType == self.TEARDOWN:
@@ -189,6 +194,29 @@ class ServerWorker:
                 try:
                     self.clientInfo['rtpSocket'].sendto(self.makeRtp(data, num),(address,port))
                     num += 1
+                except:
+                    print("Connection Error")
+            #NOTE: end the finished video
+            else:
+                break
+
+    def scrollSendRtp(self):
+        """Send RTP packets for the scrolling client"""
+        address = self.clientInfo['rtspSocket'][1][0]
+        port = int(self.clientInfo['rtpPort'])
+        
+        while True:
+            self.frameReceived.wait()
+            self.clientInfo['event'].wait(0.05)
+            
+            # Stop sending if request is PAUSE or TEARDOWN
+            if self.clientInfo['event'].isSet():
+                break 
+
+            data = self.clientInfo['videoStream'].getFrame(self.framePos[self.scrollFrameNbr], self.scrollFrameNbr)
+            if data:
+                try:
+                    self.clientInfo['rtpSocket'].sendto(self.makeRtp(data, self.scrollFrameNbr),(address,port))
                 except:
                     print("Connection Error")
             #NOTE: end the finished video
