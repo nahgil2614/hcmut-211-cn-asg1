@@ -348,18 +348,16 @@ class Client:
             self.frameNbr.set(packet.seqNum())
             #assert(packet.seqNum() == self.frameNbr.get()) #NOTE: try-except right here to count number of errors ...
             frame = packet.getPayload()
-            imageFile = self.writeFrame(frame)
-            self.updateMovie(imageFile)
+            self.writeFrame(frame)
+            self.updateMovie()
 
     def writeFrame(self, data):
         """Write the received frame to a temp image file. Return the image file."""
-        imageFile = 'cache\\' + CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
-        file = open(imageFile, 'wb')
+        file = open(self.imageFile, 'wb')
         file.write(data)
         file.close()
-        return imageFile
 
-    def updateMovie(self, imageFile):
+    def updateMovie(self):
         if self.frameNbr.get() == self.totalFrameNbr-1:
             self.pauseMovie()
             # buttons' states
