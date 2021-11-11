@@ -1,7 +1,8 @@
 from tkinter import *
+import tkinter.font
 import tkinter.messagebox
 from PIL import Image, ImageTk
-import socket, threading, sys, traceback, os
+import socket, threading, sys, traceback, os, platform
 
 from RtpPacket import RtpPacket
 
@@ -34,11 +35,25 @@ class Client:
     def __init__(self, master, serveraddr, serverport, rtpport, filename):
         self.master = master
         self.master.protocol("WM_DELETE_WINDOW", self.handler)
+
+        if platform.system() == 'Windows':
+            self.describeText = 'Describe ⓘ'
+            self.playText = 'Play ▶'
+            self.pauseText = 'Pause ⏸'
+            self.switchText = 'Switch'
+            self.teardownText = 'Teardown ■'
+        elif platform.system() == 'Linux': # linux host having font issue
+            self.describeText = 'Describe'
+            self.playText = 'Play'
+            self.pauseText = 'Pause'
+            self.switchText = 'Switch'
+            self.teardownText = 'Teardown'
+
         self.frameNbr = IntVar()
         self.totalFrameNbr = 0
         self.elapsedTime = StringVar(value='00:00')
         self.remainingTime = StringVar(value='00:00')
-        self.playPauseText = StringVar(value='Play ▶')
+        self.playPauseText = StringVar(value=self.playText)
         self.serverAddr = serveraddr
         self.serverPort = int(serverport)
         self.rtpPort = int(rtpport)
@@ -59,8 +74,10 @@ class Client:
     def createWidgets(self):
         """Build GUI."""
         # Create a label to display the movie
-        self.label = Label(self.master, height=19, bg="black")
-        self.label["text"] = self.fileName
+        # dummy photo
+        photo = ImageTk.PhotoImage(data=bytes.fromhex('89504e470d0a1a0a0000000d4948445200000001000000010100000000376ef9240000000a49444154789c636000000002000148afa4710000000049454e44ae426082'))
+        self.label = Label(self.master, height=275, image=photo, bg="black")
+        self.label.image = photo
         self.label.grid(row=0, column=0, columnspan=4, sticky=W+E+N+S, padx=5, pady=5)
 
         # Create a label to display the elapsed time
@@ -75,7 +92,7 @@ class Client:
 
         # Create Describe button
         self.describe = Button(self.master, width=10, padx=10, pady=3)
-        self.describe["text"] = "Describe ⓘ"
+        self.describe["text"] = self.describeText
         self.describe["command"] = self.describeMovie
         self.describe.grid(row=2, column=0, padx=10, pady=2)
 
@@ -87,13 +104,13 @@ class Client:
         
         # Create Switch button
         self.switch = Button(self.master, width=20, padx=10, pady=3)
-        self.switch["text"] = "Switch"
+        self.switch["text"] = self.switchText
         self.switch["command"] = self.switchMovie
         self.switch.grid(row=2, column=2, padx=10, pady=2)
         
         # Create Teardown button
         self.teardown = Button(self.master, width=10, padx=10, pady=3)
-        self.teardown["text"] = "Teardown ■"
+        self.teardown["text"] = self.teardownText
         self.teardown["command"] =  self.exitClient
         self.teardown.grid(row=2, column=3, padx=10, pady=2)
     
@@ -171,7 +188,7 @@ class Client:
             if self.parseRtspReply(data):
                 self.state = self.PLAYING
                 # buttons' style
-                self.playPauseText.set('Pause ⏸')
+                self.playPauseText.set(self.pauseText)
                 # Create a new thread and start receiving RTP packets
                 self.interrupt.clear()
                 self.worker = threading.Thread(target=self.listenRtp)
@@ -186,7 +203,7 @@ class Client:
             if self.parseRtspReply(data):
                 self.state = self.READY
                 # buttons' style
-                self.playPauseText.set('Play ▶')
+                self.playPauseText.set(self.playText)
 
     def playPauseMovie(self):
         """Play/Pause button handler."""
@@ -210,7 +227,7 @@ class Client:
                 self.playPause["state"] = DISABLED
                 self.scrollbar["state"] = DISABLED
                 self.frameNbr.set(0)
-                self.playPauseText.set('Play ▶')
+                self.playPauseText.set(self.playText)
 
                 def finish():
                     if chosen.get() == -1:
@@ -279,7 +296,7 @@ class Client:
             except: # timeout
                 self.rtpSocket.close()
                 try:
-                    os.remove(imageFile)
+                    os.remove(self.imageFile)
                 except:
                     pass
                 break
@@ -289,30 +306,27 @@ class Client:
             self.frameNbr.set(packet.seqNum())
             #assert(packet.seqNum() == self.frameNbr.get()) #NOTE: try-except right here to count number of errors ...
             frame = packet.getPayload()
-            imageFile = self.writeFrame(frame)
-            self.updateMovie(imageFile)
+            self.writeFrame(frame)
+            self.updateMovie()
 
     def writeFrame(self, data):
         """Write the received frame to a temp image file. Return the image file."""
-        imageFile = 'cache\\' + CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
-        file = open(imageFile, 'wb')
+        file = open(self.imageFile, 'wb')
         file.write(data)
         file.close()
-        return imageFile
 
-    def updateMovie(self, imageFile):
+    def updateMovie(self):
         if self.frameNbr.get() == self.totalFrameNbr-1:
             self.pauseMovie()
             # buttons' states
             self.playPause["state"] = DISABLED
             return
         """Update the image file as video frame in the GUI."""
-        image = Image.open(imageFile)
+        image = Image.open(self.imageFile)
         image = image.resize((self.width, self.height), Image.ANTIALIAS)
         photo = ImageTk.PhotoImage(image)
-        self.label = Label(self.master, height=19, image=photo, bg="black")
+        self.label.configure(image=photo, height=275)
         self.label.image = photo
-        self.label.grid(row=0, column=0, columnspan=4, sticky=W+E+N+S, padx=5, pady=5) 
 
         # Update the times
         self.elapsedTime.set(self.sec2time(int(self.frameNbr.get() * 0.05)))
@@ -366,6 +380,11 @@ class Client:
         reply = [line.split(' ') for line in reply]
         if not self.sessionId:
             self.sessionId = int(reply[2][1])
+            # path name convention difference
+            if platform.system() == 'Windows':
+                self.imageFile = 'cache\\' + CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
+            elif platform.system() == 'Linux':
+                self.imageFile = 'cache/' + CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
         #NOTE: close the connection if there are errors
         try:
             assert(reply[0][1] == '200')
@@ -391,20 +410,28 @@ class Client:
     
     def openRtpPort(self, timeout=0.5):
         """Open RTP socket binded to a specified port."""
+        exc = False
         try:
             # Create a new datagram socket to receive RTP packets from the server
             rtpSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             rtpSocket.bind(('', self.rtpPort))
         except: # socket already in use
-            self.rtpSocket.shutdown(socket.SHUT_RDWR) # stop `recvfrom` function in `listenRtp` => would trigger self.rtpSocket.close()
-            self.rtpSocket.close()
-            self.rtpSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.rtpSocket.bind(('', self.rtpPort))
-            self.rtpSocket.settimeout(timeout)
+            exc = True
         else:
-            # Set the timeout value of the socket to 0.5sec
             self.rtpSocket = rtpSocket
+            # Set the timeout value of the socket to 0.5sec
             self.rtpSocket.settimeout(timeout)
+
+        if exc:
+            try:
+                self.rtpSocket.settimeout(timeout)
+            except: # bad file description => timeouted
+                self.rtpSocket = rtpSocket
+                self.rtpSocket.bind(('', self.rtpPort))
+                self.rtpSocket.settimeout(timeout)
+
+        # Set the timeout value of the socket to 0.5sec
+        self.rtpSocket.settimeout(timeout)
 
     def handler(self):
         """Handler on explicitly closing the GUI window."""
