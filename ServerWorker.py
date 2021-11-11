@@ -176,25 +176,6 @@ class ServerWorker:
         address = self.clientInfo['rtspSocket'][1][0]
         port = int(self.clientInfo['rtpPort'])
 
-        #since we're using UDP, there is no need to wait
-        #just send as fast as we can (can lose some packets, but it's ok)
-        #self.clientInfo['event'].wait(0.05)
-            
-        # Stop sending if request is PAUSE or TEARDOWN
-        if self.clientInfo['event'].isSet():
-            return 
-        
-        print(str(num) + ', ' + str(self.framePos[num]))
-        data = self.clientInfo['videoStream'].getFrame(self.framePos[num], num)
-        if data:
-            try:
-                self.clientInfo['rtpSocket'].sendto(self.makeRtp(data, num),(address,port))
-            except:
-                print("Connection Error")
-        #NOTE: end the finished video
-        else:
-            return
-
         while True:
             self.clientInfo['event'].wait(0.05) 
             
