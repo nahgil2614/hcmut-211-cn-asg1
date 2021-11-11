@@ -10,3 +10,5 @@ On client's side:
 ```
 python3 ClientLauncher.py localhost 5000 6000 superIdol.Mjpeg
 ```
+
+*Note*: The `cache` folder is kept empty for storing the cached images during streaming
