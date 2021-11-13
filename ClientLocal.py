@@ -1,6 +1,6 @@
 from tkinter import *
 import tkinter.messagebox
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageFilter, ImageEnhance
 import socket, threading, sys, traceback, platform, io
 
 from RtpPacket import RtpPacket
@@ -39,7 +39,7 @@ class Client:
             self.describeText = 'Describe ⓘ'
             self.playText = 'Play ▶'
             self.pauseText = 'Pause ⏸'
-            self.switchText = 'Switch'
+            self.switchText = 'Switch 💩'
             self.teardownText = 'Teardown ■'
         elif platform.system() == 'Linux': # linux host having font issue
             self.describeText = 'Describe'
@@ -68,6 +68,8 @@ class Client:
         self.height = 0
         # SETUP is mandatory in an RTSP interaction
         self.setupMovie()
+        # for the scrollbar
+        self.scroll = False
         
     # THIS GUI IS JUST FOR REFERENCE ONLY, STUDENTS HAVE TO CREATE THEIR OWN GUI     
     def createWidgets(self):
@@ -157,6 +159,10 @@ class Client:
 
                 def spress(event):
                     if not self.TORNDOWN:
+                        # Small preview
+                        self.preview = Label(self.master, height=92, bg="white")
+                        self.scroll = True
+
                         self.openRtpPort(None)
                         self.interrupt.clear()
                         self.worker = threading.Thread(target=self.listenRtp)
@@ -174,6 +180,9 @@ class Client:
                 
                 def srelease(event):
                     if not self.TORNDOWN:
+                        self.scroll = False
+                        self.preview.destroy()
+
                         if self.state == self.READY:
                             self.sendRtspRequest(self.PAUSE, timeout='1')
                         elif self.state == self.PLAYING: # the become READY on the server
@@ -357,11 +366,32 @@ class Client:
             self.playPause["state"] = DISABLED
             return
         """Update the image file as video frame in the GUI."""
-        image = Image.open(io.BytesIO(data))
-        image = image.resize((self.width, self.height), Image.ANTIALIAS)
-        photo = ImageTk.PhotoImage(image)
-        self.label.configure(image=photo, height=275)
-        self.label.image = photo
+
+        if not self.scroll:
+            image = Image.open(io.BytesIO(data))
+            image = image.resize((self.width, self.height), Image.ANTIALIAS)
+            photo = ImageTk.PhotoImage(image)
+            self.label.configure(image=photo, height=275)
+            self.label.image = photo
+        else:
+            image = Image.open(io.BytesIO(data))
+            image = image.resize((self.width, self.height), Image.ANTIALIAS)
+            blurredImage = image.filter(ImageFilter.GaussianBlur(5))
+            #image brightness enhancer
+            darkImage = ImageEnhance.Brightness(blurredImage).enhance(0.55)
+            photo = ImageTk.PhotoImage(darkImage)
+            self.label.configure(image=photo, height=275)
+            self.label.image = photo
+
+            try:
+                # Small preview
+                image = image.resize((self.width//3, self.height//3), Image.ANTIALIAS)
+                photo = ImageTk.PhotoImage(image)
+                self.preview.configure(image=photo, height=92)
+                self.preview.image = photo
+                self.preview.place(x=self.scrollbar.winfo_x()+self.scrollbar.coords()[0]-self.width//6, y=self.scrollbar.winfo_y()-self.height//3-5)
+            except: # the moment we release the mouse
+                pass
 
         # Update the times
         self.elapsedTime.set(self.sec2time(int(self.frameNbr.get() * 0.05)))

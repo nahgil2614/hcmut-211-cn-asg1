@@ -29,6 +29,7 @@ class ServerWorker:
         self.state = self.INIT
         self.clientInfo = clientInfo
         self.framePos = [0]
+        self.frameReceived = threading.Event()
         
     def run(self):
         threading.Thread(target=self.recvRtspRequest).start()
@@ -183,7 +184,7 @@ class ServerWorker:
         port = int(self.clientInfo['rtpPort'])
         
         while True:
-            self.clientInfo['event'].wait(0.05) 
+            self.clientInfo['event'].wait(0.05)
             
             # Stop sending if request is PAUSE or TEARDOWN
             if self.clientInfo['event'].isSet():

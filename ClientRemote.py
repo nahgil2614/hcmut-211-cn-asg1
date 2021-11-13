@@ -39,7 +39,7 @@ class Client:
             self.describeText = 'Describe ⓘ'
             self.playText = 'Play ▶'
             self.pauseText = 'Pause ⏸'
-            self.switchText = 'Switch'
+            self.switchText = 'Switch 💩'
             self.teardownText = 'Teardown ■'
         elif platform.system() == 'Linux': # linux host having font issue
             self.describeText = 'Describe'

@@ -22,10 +22,10 @@ if __name__ == "__main__":
 	myAddr = s.getsockname()[0]
 	s.close()
 	if serverAddr == 'localhost' or serverAddr == '127.0.0.1' or serverAddr == myAddr:
-		# debug mode for local test
+		# debug mode for local test - like YouTube on desktop
 		app = ClientLocal(root, serverAddr, serverPort, rtpPort, fileName)
 	else:
-		# release mode with more robustness
+		# release mode with more robustness - like YouTube on mobile
 		app = ClientRemote(root, serverAddr, serverPort, rtpPort, fileName)
 	
 	app.master.title("Now streaming " + fileName + "...")
