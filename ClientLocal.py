@@ -1,12 +1,12 @@
 from tkinter import *
 import tkinter.messagebox
 from PIL import Image, ImageTk
-import socket, threading, sys, traceback, os, platform
+import socket, threading, sys, traceback, platform, io
 
 from RtpPacket import RtpPacket
 
-CACHE_FILE_NAME = "cache-"
-CACHE_FILE_EXT = ".jpg"
+# CACHE_FILE_NAME = "cache-"
+# CACHE_FILE_EXT = ".jpg"
 
 #NOTE: rmb to close rtsp socket (the exit logic) => DONE!
 #NOTE: implement a buffer (queue)?
@@ -126,34 +126,34 @@ class Client:
             self.height = int(self.height * ratio)
 
             if self.state == self.INIT:
-                # Create the scrollbar
-                def press(event):
-                    if not self.TORNDOWN and self.scrollbar["state"] != DISABLED:
-                        self.scrollbar["variable"] = 0
-                        self.scrollbar.set(self.frameNbr.get())
+                # # Create the scrollbar
+                # def press(event):
+                #     if not self.TORNDOWN and self.scrollbar["state"] != DISABLED:
+                #         self.scrollbar["variable"] = 0
+                #         self.scrollbar.set(self.frameNbr.get())
 
-                # return the control back to self.frameNbr
-                def release(event):
-                    if not self.TORNDOWN and self.scrollbar["state"] != DISABLED:
-                        self.frameNbr.set(self.scrollbar.get())
-                        self.scrollbar["variable"] = self.frameNbr
-                        if self.state == self.PLAYING:
-                            self.sendRtspRequest(self.PAUSE)
-                            data = self.recvRtspReply()
-                            self.parseRtspReply(data)
-                            # buttons' states
-                            if self.playPause["state"] == DISABLED:
-                                self.playPause["state"] = NORMAL
-                        self.sendRtspRequest(self.PLAY)
-                        data = self.recvRtspReply()
-                        self.parseRtspReply(data)
-                        if self.state == self.READY:
-                            self.sendRtspRequest(self.PAUSE)
-                            data = self.recvRtspReply()
-                            self.parseRtspReply(data)
-                            # buttons' states
-                            if self.playPause["state"] == DISABLED:
-                                self.playPause["state"] = NORMAL
+                # # return the control back to self.frameNbr
+                # def release(event):
+                #     if not self.TORNDOWN and self.scrollbar["state"] != DISABLED:
+                #         self.frameNbr.set(self.scrollbar.get())
+                #         self.scrollbar["variable"] = self.frameNbr
+                #         if self.state == self.PLAYING:
+                #             self.sendRtspRequest(self.PAUSE)
+                #             data = self.recvRtspReply()
+                #             self.parseRtspReply(data)
+                #             # buttons' states
+                #             if self.playPause["state"] == DISABLED:
+                #                 self.playPause["state"] = NORMAL
+                #         self.sendRtspRequest(self.PLAY)
+                #         data = self.recvRtspReply()
+                #         self.parseRtspReply(data)
+                #         if self.state == self.READY:
+                #             self.sendRtspRequest(self.PAUSE)
+                #             data = self.recvRtspReply()
+                #             self.parseRtspReply(data)
+                #             # buttons' states
+                #             if self.playPause["state"] == DISABLED:
+                #                 self.playPause["state"] = NORMAL
 
                 def spress(event):
                     if not self.TORNDOWN:
@@ -327,19 +327,11 @@ class Client:
             if self.interrupt.isSet():
                 break
 
-            exc = False
             try:
                 data, _ = self.rtpSocket.recvfrom(1 << 16)
                 assert(data)
             except: # timeout
                 self.rtpSocket.close()
-                exc = True
-
-            if exc:
-                try:
-                    os.remove(imageFile)
-                except:
-                    pass
                 break
 
             # packet received sucessfully
@@ -348,23 +340,24 @@ class Client:
             self.frameNbr.set(packet.seqNum())
             #assert(packet.seqNum() == self.frameNbr.get()) #NOTE: try-except right here to count number of errors ...
             frame = packet.getPayload()
-            self.writeFrame(frame)
-            self.updateMovie()
+            #self.writeFrame(frame)
+            self.updateMovie(frame)
 
-    def writeFrame(self, data):
-        """Write the received frame to a temp image file. Return the image file."""
-        file = open(self.imageFile, 'wb')
-        file.write(data)
-        file.close()
+    # DO NOT USE THIS ANYMORE
+    # def writeFrame(self, data):
+    #     """Write the received frame to a temp image file. Return the image file."""
+    #     file = open(self.imageFile, 'wb')
+    #     file.write(data)
+    #     file.close()
 
-    def updateMovie(self):
+    def updateMovie(self, data):
         if self.frameNbr.get() == self.totalFrameNbr-1:
             self.pauseMovie()
             # buttons' states
             self.playPause["state"] = DISABLED
             return
         """Update the image file as video frame in the GUI."""
-        image = Image.open(self.imageFile)
+        image = Image.open(io.BytesIO(data))
         image = image.resize((self.width, self.height), Image.ANTIALIAS)
         photo = ImageTk.PhotoImage(image)
         self.label.configure(image=photo, height=275)
@@ -426,10 +419,11 @@ class Client:
         if not self.sessionId:
             self.sessionId = int(reply[2][1])
             # path name convention difference
-            if platform.system() == 'Windows':
-                self.imageFile = 'cache\\' + CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
-            elif platform.system() == 'Linux':
-                self.imageFile = 'cache/' + CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
+            # NO NEED TO WRITE TO FILES -> NO MORE HEADACHE
+            # if platform.system() == 'Windows':
+            #     self.imageFile = 'cache\\' + CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
+            # elif platform.system() == 'Linux':
+            #     self.imageFile = 'cache/' + CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
         #NOTE: close the connection if there are errors
         try:
             assert(reply[0][1] == '200')
