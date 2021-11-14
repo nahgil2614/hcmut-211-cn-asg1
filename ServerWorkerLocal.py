@@ -19,6 +19,8 @@ class ServerWorker:
     PLAYING = 2
     SWITCHING = 3
 
+    SCROLLING = False
+
     OK_200 = 0
     FILE_NOT_FOUND_404 = 1
     CON_ERR_500 = 2
@@ -130,6 +132,8 @@ class ServerWorker:
             assert(int(request[2].split(' ')[1]) == self.clientInfo['session'])
             if len(request) == 4 or self.state == self.PLAYING:
                 print("processing PAUSE\n")
+                if len(request) == 4 and request[3].split(' ')[1] == '0':
+                    self.SCROLLING = True
                 self.clientInfo['event'].set()
                 self.replyRtsp(self.OK_200, seq[1])
 
@@ -141,20 +145,32 @@ class ServerWorker:
                     self.clientInfo['worker'] = threading.Thread(target=self.scrollSendRtp)
                     self.clientInfo['worker'].start()
                 elif request[3].split(' ')[1] == '1':
+                    self.SCROLLING = False
                     self.frameReceived.set()
+                    try: # if the thread cannot stop it
+                        self.clientInfo['rtpSocket'].shutdown(socket.SHUT_RDWR)
+                        self.clientInfo['rtpSocket'].close()
+                    except:
+                        pass
                 elif request[3].split(' ')[1] == '2':
+                    self.SCROLLING = False
                     self.frameReceived.set()
                     self.state = self.READY
+                    try: # if the thread cannot stop it
+                        self.clientInfo['rtpSocket'].shutdown(socket.SHUT_RDWR)
+                        self.clientInfo['rtpSocket'].close()
+                    except:
+                        pass
         
         # Process TEARDOWN request
         elif requestType == self.TEARDOWN:
             assert(int(request[2].split(' ')[1]) == self.clientInfo['session'])
             if self.state == self.READY or self.state == self.PLAYING:
                 print("processing TEARDOWN\n")
-                try: #NOTE: SETUP -> TEARDOWN : exception
-                    self.clientInfo['event'].set()
-                    # the RTP socket would be closed due to timeout
-                    # we would send any images remaining in the buffer
+                self.clientInfo['event'].set()
+                try: # if the thread cannot stop it
+                    self.clientInfo['rtpSocket'].shutdown(socket.SHUT_RDWR)
+                    self.clientInfo['rtpSocket'].close()
                 except:
                     pass
 
@@ -188,6 +204,9 @@ class ServerWorker:
             
             # Stop sending if request is PAUSE or TEARDOWN
             if self.clientInfo['event'].isSet():
+                if not self.SCROLLING:
+                    self.clientInfo['rtpSocket'].shutdown(socket.SHUT_RDWR)
+                    self.clientInfo['rtpSocket'].close()
                 break 
             
             data = self.clientInfo['videoStream'].getFrame(self.framePos[num], num)
@@ -218,8 +237,9 @@ class ServerWorker:
             if data:
                 try:
                     self.clientInfo['rtpSocket'].sendto(self.makeRtp(data, self.scrollFrameNbr),(address,port))
-                except:
-                    print("Connection Error")
+                except E:
+                    print("Connection Scroll Error")
+                    print(E)
             #NOTE: end the finished video
             else:
                 break

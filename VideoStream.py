@@ -10,6 +10,9 @@ class VideoStream: #Mjpeg only
 		except:
 			raise IOError
 		self.frameNum = 0
+
+	def __del__(self): # finalizer
+		self.file.close()
 	
 	def getSize(self):
 		"""Get next frame."""
