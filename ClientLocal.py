@@ -144,6 +144,10 @@ class Client:
                         self.preview = Label(self.master, height=92, bg="gray", bd=2)
                         self.scroll = True
 
+                        if self.rtspSeq == 1: # scroll before everything
+                            self.playMovie()
+                            self.pauseMovie()
+
                         self.rtpSocket = self.openRtpPort(None)
                         self.interrupt.clear()
                         self.worker = threading.Thread(target=self.listenRtp)
