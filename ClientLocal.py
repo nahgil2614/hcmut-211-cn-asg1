@@ -1,6 +1,6 @@
 from tkinter import *
 import tkinter.messagebox
-from PIL import Image, ImageTk, ImageEnhance
+from PIL import Image, ImageTk, ImageFilter, ImageEnhance
 import socket, threading, sys, traceback, platform, io
 
 from RtpPacket import RtpPacket
@@ -27,8 +27,8 @@ class Client:
     TEARDOWN = 3
     DESCRIBE = 4
     SWITCH = 5
-
-    TORNDOWN = False
+    TORNDOWN = 6
+    CLOSE = 7
     
     # Initiation..
     def __init__(self, master, serveraddr, serverport, rtpport, filename):
@@ -47,6 +47,9 @@ class Client:
             self.pauseText = 'Pause'
             self.switchText = 'Switch'
             self.stopText = 'Stop'
+
+        # for listenRtp
+        self.interrupt = threading.Event()
 
         self.frameNbr = IntVar()
         self.totalFrameNbr = 0
@@ -114,10 +117,6 @@ class Client:
         self.stop["text"] = self.stopText
         self.stop["command"] =  self.stopMovie
         self.stop.grid(row=2, column=3, padx=10, pady=2)
-
-        # The small preview
-        self.preview = Label(self.master)
-        self.preview.destroy()
     
     def setupMovie(self):
         """Setup function handler."""
@@ -126,22 +125,26 @@ class Client:
             data = self.recvRtspReply()
             if not self.parseRtspReply(data):
                 return
+
             self.label.update()
             ratio = min(self.label.winfo_width()/self.width, self.label.winfo_height()/self.height)
             self.width = int(self.width * ratio)
             self.height = int(self.height * ratio)
 
             # for the mini preview
-            self.rightBound = 2*self.label.winfo_x()+self.label.winfo_width()-7-self.width//3-4
+            self.rightBound = 2*self.label.winfo_x()+self.label.winfo_width()-7-self.width//3-4 # 4 == 2 * self.scrollbar["bd"]
 
             if self.state == self.INIT:
+
                 def spress(event):
-                    if not self.TORNDOWN:
+                    if self.state != self.SWITCHING and self.state != self.TORNDOWN:
+                        # The scale's position
+                        self.frameNbr.set(min(self.totalFrameNbr-1, max(0, (event.x-self.scrollbar["sliderlength"]/2) / (self.scrollbar["length"]-self.scrollbar["sliderlength"]) * (self.totalFrameNbr-1))))
                         # Small preview
                         self.preview = Label(self.master, height=92, bg="gray", bd=2)
+                        self.scroll = True
 
                         self.rtpSocket = self.openRtpPort(None)
-                        print('scrolling')
                         self.interrupt.clear()
                         self.worker = threading.Thread(target=self.listenRtp)
                         self.worker.start()
@@ -155,13 +158,14 @@ class Client:
                         self.parseRtspReply(data)
 
                 def scroll(event):
-                    if not self.TORNDOWN:
+                    if self.state != self.SWITCHING and self.state != self.TORNDOWN:
                         self.sendRtspRequest(self.PLAY, timeout='0')
                         data = self.recvRtspReply()
                         self.parseRtspReply(data)
                 
                 def srelease(event):
-                    if not self.TORNDOWN:
+                    if self.state != self.SWITCHING and self.state != self.TORNDOWN:
+                        self.scroll = False
                         self.preview.destroy()
 
                         if self.state == self.READY:
@@ -170,11 +174,13 @@ class Client:
                             self.sendRtspRequest(self.PAUSE, timeout='2')
                         data = self.recvRtspReply()
                         self.parseRtspReply(data)
-                        try:
-                            self.rtpSocket.shutdown(socket.SHUT_RDWR)
-                            self.rtpSocket.close()
-                        except:
-                            pass
+
+                        # close the socket
+                        self.interrupt.set()
+                        self.rtpSocket.settimeout(0.001)
+                        self.rtpSocket.shutdown(socket.SHUT_RDWR) # stop `recvfrom` function in `listenRtp` => would trigger self.rtpSocket.close()
+                        self.rtpSocket.close()
+
                         # buttons' states
                         if self.playPause["state"] == DISABLED:
                             self.playPause["state"] = NORMAL
@@ -182,8 +188,20 @@ class Client:
                         if self.state == self.PLAYING:
                             self.state = self.READY
                             self.playMovie()
+                        else:
+                            # HOW TO CLOSE THIS THREAD???
+                            # (??) => no need cuz it'll be overwritten eventually by openRtpPort
+                            #self.worker.join()
 
-                self.scrollbar = Scale(self.master, from_=0, to=self.totalFrameNbr-1, length=self.label.winfo_width()*0.8, orient=HORIZONTAL, showvalue=0, sliderlength=15, activebackground="red", bg="gray", troughcolor="black")
+                            # undo the dark blurred image
+                            image = Image.open(io.BytesIO(self.data))
+                            image = image.resize((self.width, self.height), Image.ANTIALIAS)
+                            photo = ImageTk.PhotoImage(image)
+                            for _ in range(2):
+                                self.label.configure(image=photo, height=275)
+                                self.label.image = photo
+
+                self.scrollbar = Scale(self.master, from_=0, to=self.totalFrameNbr-1, length=self.master.winfo_width()*0.8, orient=HORIZONTAL, showvalue=0, sliderlength=15, activebackground="red", bg="gray", troughcolor="black")
                 self.scrollbar["variable"] = self.frameNbr
                 # self.scrollbar.bind("<Button-1>", press)
                 # self.scrollbar.bind("<ButtonRelease-1>", release)
@@ -195,21 +213,20 @@ class Client:
                 self.scrollbar["variable"] = self.frameNbr
                 self.scrollbar.set(0)
                 self.scrollbar["to"] = self.totalFrameNbr-1
-                self.scrollbar["length"] = self.label.winfo_width()*0.8
+                #self.scrollbar["length"] = self.label.winfo_width()*0.8
 
             self.state = self.READY
-            self.interrupt = threading.Event()
+            self.interrupt.clear()
 
     def describeMovie(self):
         """Describe function handler."""
-        if not self.TORNDOWN:
-            self.sendRtspRequest(self.DESCRIBE)
-            data = self.recvRtspReply()
-            self.parseRtspReply(data)
+        self.sendRtspRequest(self.DESCRIBE)
+        data = self.recvRtspReply()
+        self.parseRtspReply(data)
     
     def playMovie(self):
         """Play button handler."""
-        if not self.TORNDOWN and self.state == self.READY:
+        if self.state != self.TORNDOWN and self.state == self.READY:
             self.sendRtspRequest(self.PLAY)
             #NOTE: open the port here to decrease the lost datagram numbers
             #if we open after parsing, we can open after when the server have sent the first frame
@@ -226,7 +243,7 @@ class Client:
 
     def pauseMovie(self):
         """Pause button handler."""
-        if not self.TORNDOWN and self.state == self.PLAYING:
+        if self.state != self.TORNDOWN and self.state == self.PLAYING:
             self.interrupt.set()
             self.sendRtspRequest(self.PAUSE)
             data = self.recvRtspReply()
@@ -243,82 +260,79 @@ class Client:
             self.pauseMovie()
 
     def switchMovie(self):
-        if not self.TORNDOWN:
-            self.interrupt.set()
-            self.sendRtspRequest(self.SWITCH)
-            data = self.recvRtspReply()
-            if self.parseRtspReply(data):
-                # in case the user just choose the current movie
-                oldState = self.state
-                oldFrameNbr = self.frameNbr.get()
+        self.interrupt.set()
+        self.sendRtspRequest(self.SWITCH)
+        data = self.recvRtspReply()
+        if self.parseRtspReply(data):
+            # in case the user just choose the current movie
 
-                self.state = self.SWITCHING
-                self.switch["state"] = DISABLED
-                self.playPause["state"] = DISABLED
-                self.scrollbar["state"] = DISABLED
-                self.frameNbr.set(0)
-                self.playPauseText.set(self.playText)
+            self.switch["state"] = DISABLED
+            self.playPause["state"] = DISABLED
+            self.scrollbar["state"] = DISABLED
+            self.playPauseText.set(self.playText)
 
-                def finish():
-                    if chosen.get() == -1:
-                        tkinter.messagebox.showerror('Error', 'Please choose a movie!')
-                        chooseMovie.lift()
-                    else:
-                        chooseMovie.destroy()
-
-                chooseMovie = Toplevel(self.master)
-                chooseMovie.protocol("WM_DELETE_WINDOW", finish)
-                label = Label(chooseMovie, text="Choose a movie:", anchor=W, width=15)
-                label.grid(row=0, column=0, padx=2, pady=2)
-                chosen = IntVar(value=-1)
-                for i in range(len(self.availableMovies)):
-                    R = Radiobutton(chooseMovie, text=self.availableMovies[i].split('.')[0], variable=chosen, value=i, anchor=W, width=15)
-                    R.grid(row=i+1, column=0, padx=2, pady=2)
-                # Create Done button
-                done = Button(chooseMovie, anchor=CENTER, padx=3, pady=3)
-                done["text"] = "Done"
-                done["command"] = finish
-                done.grid(row=i+2, column=0, padx=2, pady=2)
-
-                self.master.wait_window(chooseMovie)
-                self.switch["state"] = NORMAL
-                self.playPause["state"] = NORMAL
-                self.scrollbar["state"] = NORMAL
-                if self.fileName == self.availableMovies[chosen.get()]:
-                    tkinter.messagebox.showwarning('Same movie', 'You have chosen the same movie again!')
-                    self.frameNbr.set(oldFrameNbr)
-                    if oldState == self.PLAYING:
-                        self.state = self.READY
-                        self.playMovie()
-                    elif oldState == self.READY:
-                        self.state = self.READY
-                        self.playMovie()
-                        self.pauseMovie()
+            def finish():
+                if chosen.get() == -1:
+                    tkinter.messagebox.showerror('Error', 'Please choose a movie!')
+                    chooseMovie.lift()
                 else:
-                    self.fileName = self.availableMovies[chosen.get()]
-                    self.master.title("Now streaming " + self.fileName + "...")
-                    # SETUP is mandatory in an RTSP interaction
-                    self.setupMovie()
+                    chooseMovie.destroy()
 
-    def stopMovie(self):
+            chooseMovie = Toplevel(self.master)
+            chooseMovie.protocol("WM_DELETE_WINDOW", finish)
+            label = Label(chooseMovie, text="Choose a movie:", anchor=W, width=15)
+            label.grid(row=0, column=0, padx=2, pady=2)
+            chosen = IntVar(value=-1)
+            for i in range(len(self.availableMovies)):
+                R = Radiobutton(chooseMovie, text=self.availableMovies[i].split('.')[0], variable=chosen, value=i, anchor=W, width=15)
+                R.grid(row=i+1, column=0, padx=2, pady=2)
+            # Create Done button
+            done = Button(chooseMovie, anchor=CENTER, padx=3, pady=3)
+            done["text"] = "Done"
+            done["command"] = finish
+            done.grid(row=i+2, column=0, padx=2, pady=2)
+
+            self.master.wait_window(chooseMovie)
+            self.switch["state"] = NORMAL
+            self.playPause["state"] = NORMAL
+            self.stop["state"] = NORMAL
+            self.scrollbar["state"] = NORMAL
+            if self.state != self.TORNDOWN and self.fileName == self.availableMovies[chosen.get()]:
+                tkinter.messagebox.showwarning('Same movie', 'You have chosen the same movie again!')
+                if self.state == self.PLAYING:
+                    self.state = self.READY
+                    self.playMovie()
+                elif self.state == self.READY:
+                    self.playMovie()
+                    self.pauseMovie()
+            else:
+                self.state = self.SWITCHING
+                self.fileName = self.availableMovies[chosen.get()]
+                self.master.title("Now streaming " + self.fileName + "...")
+                # SETUP is mandatory in an RTSP interaction
+                self.setupMovie()
+
+    def stopMovie(self): # WHAT'S THE LOGIC???
         """Stop button handler."""
         # This command stop the current movie
-        if not self.TORNDOWN and (self.state == self.READY or self.state == self.PLAYING):
+        if self.state != self.TORNDOWN and (self.state == self.READY or self.state == self.PLAYING):
             self.sendRtspRequest(self.TEARDOWN) # for the server to close the movie file
             data = self.recvRtspReply()
             if self.parseRtspReply(data):
-                try: # close at the beginning
+                if self.state == self.PLAYING:
+                    self.interrupt.set()
+                    self.rtpSocket.settimeout(0.001)
                     self.rtpSocket.shutdown(socket.SHUT_RDWR) # stop `recvfrom` function in `listenRtp` => would trigger self.rtpSocket.close()
                     self.worker.join()
-                except:
-                    pass
+                self.state = self.TORNDOWN
+                self.playPause["state"] = DISABLED
+                self.stop["state"] = DISABLED
+                self.scrollbar["state"] = DISABLED
 
     def listenRtp(self):
         """Listen for RTP packets."""
-        while True:
-            #self.interrupt.wait(0.01)
-            if self.interrupt.isSet():
-                break
+        while not self.interrupt.isSet():
+            # assume stable network
             try:
                 data, _ = self.rtpSocket.recvfrom(1 << 16)
                 assert(data)
@@ -326,6 +340,7 @@ class Client:
                 self.rtpSocket.close()
                 break
 
+            # take less than 0.05 sec to process this
             # packet received sucessfully
             packet = RtpPacket()
             packet.decode(data)
@@ -337,7 +352,8 @@ class Client:
 
     def updateMovie(self, data):
         """Update the image file as video frame in the GUI."""
-        if not self.preview.winfo_exists():
+
+        if not self.scroll:
             if self.frameNbr.get() == self.totalFrameNbr-1:
                 self.pauseMovie()
                 # buttons' states
@@ -351,23 +367,24 @@ class Client:
             self.label.image = photo
         else:
             # Small preview
+            self.data = data
             image = Image.open(io.BytesIO(data))
-            image = image.resize((self.width//3, self.height//3), Image.ANTIALIAS)
-            photo = ImageTk.PhotoImage(image)
+            smallImage = image.resize((self.width//3, self.height//3))
+
+            largeImage = smallImage.resize((self.width, self.height))
+            #image brightness enhancer
+            darkImage = ImageEnhance.Brightness(largeImage).enhance(0.55)
+            photo = ImageTk.PhotoImage(darkImage)
+            self.label.configure(image=photo, height=275)
+            self.label.image = photo
 
             try:
+                photo = ImageTk.PhotoImage(smallImage)
                 self.preview.configure(image=photo, height=92)
                 self.preview.image = photo
                 self.preview.place(x=min(self.rightBound, max(7, self.scrollbar.winfo_x()+self.scrollbar.coords()[0]-self.width//6)), y=self.scrollbar.winfo_y()-self.height//3-5)
             except: # the moment we release the mouse
                 pass
-
-            #image brightness enhancer
-            darkImage = ImageEnhance.Brightness(image).enhance(0.55)
-            darkImage = darkImage.resize((self.width, self.height))
-            photo = ImageTk.PhotoImage(darkImage)
-            self.label.configure(image=photo, height=275)
-            self.label.image = photo
 
         # Update the times
         self.elapsedTime.set(self.sec2time(int(self.frameNbr.get() * 0.05)))
@@ -404,6 +421,10 @@ class Client:
                   'Session: ' + str(self.sessionId)
         elif requestCode == self.SWITCH:
             msg = 'SWITCH RTSP/1.0\n' +\
+                  'CSeq: ' + str(self.rtspSeq) + '\n' +\
+                  'Session: ' + str(self.sessionId)
+        elif requestCode == self.CLOSE:
+            msg = 'CLOSE RTSP/1.0\n' +\
                   'CSeq: ' + str(self.rtspSeq) + '\n' +\
                   'Session: ' + str(self.sessionId)
 
@@ -465,20 +486,18 @@ class Client:
         except: # socket already in use
             self.rtpSocket.shutdown(socket.SHUT_RDWR) # stop `recvfrom` function in `listenRtp` => would trigger self.rtpSocket.close()
             self.rtpSocket.close()
-            return self.openRtpPort(timeout)        
+            return self.openRtpPort(timeout)
 
     def handler(self):
         """Handler on explicitly closing the GUI window."""
         oldState = self.state
         self.pauseMovie()
         if tkinter.messagebox.askyesno("Quit", "Do you want to quit?"):
-            try: # close at the beginning
-                self.rtpSocket.shutdown(socket.SHUT_RDWR) # stop `recvfrom` function in `listenRtp` => would trigger self.rtpSocket.close()
-                self.worker.join()
-            except:
-                pass
-            self.rtspSocket.close()
-            self.master.destroy()
+            self.sendRtspRequest(self.CLOSE)
+            data = self.recvRtspReply()
+            if self.parseRtspReply(data):
+                self.rtspSocket.close()
+                self.master.destroy()
         elif oldState == self.PLAYING:
             self.playMovie()
 

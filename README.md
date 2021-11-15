@@ -11,4 +11,6 @@ On client's side:
 python3 ClientLauncher.py localhost 5000 6000 superIdol.Mjpeg
 ```
 
-*Note*: The `cache` folder is kept empty for storing the cached images during streaming
+Bugs:
+- Scroll at the start (before any Plays) would result in black screen (but the app still works).
+- Rarely Pause while Playing (acceptable): maybe because race condition b/w threads (?).
