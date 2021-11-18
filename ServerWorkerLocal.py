@@ -14,6 +14,7 @@ class ServerWorker:
     DESCRIBE = 'DESCRIBE'
     SWITCH = 'SWITCH'
     CLOSE = 'CLOSE'
+    SPEED = 'SPEED'
     
     INIT = 0
     READY = 1
@@ -102,6 +103,9 @@ class ServerWorker:
                 
                 # Get the RTP/UDP port from the last line
                 self.clientInfo['rtpPort'] = request[2].split(' ')[3]
+
+                # Set the playback speed to normal
+                self.waitInterval = 0.05
         
         # Process DESCRIBE request
         elif requestType == self.DESCRIBE:
@@ -192,6 +196,13 @@ class ServerWorker:
             self.replyRtsp(self.OK_200, seq[1])
             connSocket = self.clientInfo['rtspSocket'][0]
             connSocket.close()
+
+        # Process SPEED request
+        elif requestType == self.SPEED:
+            assert(int(request[2].split(' ')[1]) == self.clientInfo['session'])
+            print("processing SPEED\n")
+            self.waitInterval = 0.025 * 2**int(request[3].split(' ')[1])
+            self.replyRtsp(self.OK_200, seq[1])
             
     def sendRtp(self, num):
         """Send RTP packets over UDP."""
@@ -205,7 +216,7 @@ class ServerWorker:
             # IRL: queuing delay due to the OS scheduler would make it slower in the client
             # => buffer in Client is the solution (but it would ruin the goal of this assignment, which is the images on user's screen is gotten from the server in real-time)
             # so we didn't implement it
-            self.clientInfo['event'].wait(0.05 - self.processingInterval/1000000000)
+            self.clientInfo['event'].wait(self.waitInterval - self.processingInterval/1000000000)
             
             start = time.perf_counter_ns() # best possible precision
             # Stop sending if request is PAUSE or TEARDOWN
@@ -234,7 +245,7 @@ class ServerWorker:
         
         while True:
             self.frameReceived.wait()
-            self.clientInfo['event'].wait(0.05) # don't use self.processingInterval as there's no need for natural timing
+            self.clientInfo['event'].wait(0.025) # don't use self.processingInterval as there's no need for natural timing
             
             # Stop sending if request is PAUSE or TEARDOWN
             if self.clientInfo['event'].isSet():

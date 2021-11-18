@@ -1,7 +1,7 @@
 from tkinter import *
 import tkinter.messagebox
 from PIL import Image, ImageTk, ImageFilter, ImageEnhance
-import socket, threading, sys, traceback, platform, io
+import socket, threading, sys, traceback, platform, io, time
 
 from RtpPacket import RtpPacket
 
@@ -19,6 +19,7 @@ class Client:
     READY = 1
     PLAYING = 2
     SWITCHING = 3
+    TORNDOWN = 4
     state = INIT
     
     SETUP = 0
@@ -27,8 +28,8 @@ class Client:
     TEARDOWN = 3
     DESCRIBE = 4
     SWITCH = 5
-    TORNDOWN = 6
-    CLOSE = 7
+    CLOSE = 6
+    SPEED = 7
     
     # Initiation..
     def __init__(self, master, serveraddr, serverport, rtpport, filename):
@@ -47,10 +48,13 @@ class Client:
             self.pauseText = 'Pause'
             self.switchText = 'Switch'
             self.stopText = 'Stop'
+        self.speedTexts = ['x2', 'Normal', 'x0.5']
 
         # for listenRtp
         self.interrupt = threading.Event()
 
+        # playback speed
+        self.speedText = StringVar()
         self.frameNbr = IntVar()
         self.totalFrameNbr = 0
         self.elapsedTime = StringVar(value='00:00')
@@ -73,6 +77,27 @@ class Client:
         self.setupMovie()
         # for the scrollbar
         self.scroll = False
+
+        def forward5s(event):
+            oldState = self.state
+            self.pauseMovie()
+            self.frameNbr.set(self.frameNbr.get()+100)
+            if oldState == self.PLAYING:
+                self.playMovie()
+
+        def backward5s(event):
+            oldState = self.state
+            self.pauseMovie()
+            self.frameNbr.set(self.frameNbr.get()-100)
+            if oldState == self.PLAYING:
+                self.playMovie()
+            if self.playPause["state"] == DISABLED:
+                self.playPause["state"] = NORMAL
+
+        self.master.bind('<Right>', forward5s)
+        self.master.bind('<Left>', backward5s)
+        self.master.bind('<space>', self.playPauseMovie)
+        self.master.bind('<Escape>', self.handler)
         
     # THIS GUI IS JUST FOR REFERENCE ONLY, STUDENTS HAVE TO CREATE THEIR OWN GUI     
     def createWidgets(self):
@@ -80,9 +105,10 @@ class Client:
         # Create a label to display the movie
         # dummy photo
         photo = ImageTk.PhotoImage(data=bytes.fromhex('89504e470d0a1a0a0000000d4948445200000001000000010100000000376ef9240000000a49444154789c636000000002000148afa4710000000049454e44ae426082'))
-        self.label = Label(self.master, height=275, image=photo, bg="black")
+        self.label = Label(self.master, height=275, image=photo,
+                           bg="black", relief='ridge', bd=2)
         self.label.image = photo
-        self.label.grid(row=0, column=0, columnspan=4, sticky=W+E+N+S, padx=5, pady=5)
+        self.label.grid(row=0, column=0, columnspan=5, sticky=W+E+N+S, padx=5, pady=5)
 
         # Create a label to display the elapsed time
         self.eTimeLabel = Label(self.master, anchor=W, width=12, padx=3, pady=3, bg="white")
@@ -92,31 +118,38 @@ class Client:
         # Create a label to display the remaining time
         self.eTimeLabel = Label(self.master, anchor=E, width=12, padx=3, pady=3, bg="white")
         self.eTimeLabel["textvariable"] = self.remainingTime
-        self.eTimeLabel.grid(row=1, column=3, padx=2, pady=2)
+        self.eTimeLabel.grid(row=1, column=4, padx=2, pady=2)
 
         # Create Describe button
-        self.describe = Button(self.master, width=10, padx=10, pady=3)
+        self.describe = Button(self.master, width=10, padx=7, pady=3)
         self.describe["text"] = self.describeText
         self.describe["command"] = self.describeMovie
-        self.describe.grid(row=2, column=0, padx=10, pady=2)
+        self.describe.grid(row=2, column=0, padx=7, pady=2)
 
-        # Create Play/Pause button
-        self.playPause = Button(self.master, width=20, padx=10, pady=3)
-        self.playPause["textvariable"] = self.playPauseText
-        self.playPause["command"] = self.playPauseMovie
-        self.playPause.grid(row=2, column=1, padx=10, pady=2)
-        
         # Create Switch button
-        self.switch = Button(self.master, width=20, padx=10, pady=3)
+        self.switch = Button(self.master, width=10, padx=7, pady=3)
         self.switch["text"] = self.switchText
         self.switch["command"] = self.switchMovie
-        self.switch.grid(row=2, column=2, padx=10, pady=2)
+        self.switch.grid(row=2, column=1, padx=7, pady=2)
+
+        # Create Play/Pause button
+        self.playPause = Button(self.master, width=20, padx=7, pady=3)
+        self.playPause["textvariable"] = self.playPauseText
+        self.playPause["command"] = self.playPauseMovie
+        self.playPause.grid(row=2, column=2, padx=7, pady=2)
+
+        # Create Speed button
+        self.speed = OptionMenu(self.master, self.speedText, *self.speedTexts,
+                                command=self.changeSpeedMovie)
+        self.speed.config(width=7, padx=7, pady=3,
+                          direction='above', relief='raised', bd=2)
+        self.speed.grid(row=2, column=3, padx=7, pady=2)
         
         # Create Stop button
-        self.stop = Button(self.master, width=10, padx=10, pady=3)
+        self.stop = Button(self.master, width=10, padx=7, pady=3)
         self.stop["text"] = self.stopText
         self.stop["command"] =  self.stopMovie
-        self.stop.grid(row=2, column=3, padx=10, pady=2)
+        self.stop.grid(row=2, column=4, padx=7, pady=2)
     
     def setupMovie(self):
         """Setup function handler."""
@@ -144,7 +177,9 @@ class Client:
                         self.preview = Label(self.master, height=92, bg="gray", bd=2)
                         self.scroll = True
 
-                        if self.rtspSeq == 1: # scroll before everything
+                        try: # scroll before everything
+                            self.rtpSocket
+                        except:
                             self.playMovie()
                             self.pauseMovie()
 
@@ -162,13 +197,13 @@ class Client:
                         self.parseRtspReply(data)
 
                 def scroll(event):
-                    if self.state != self.SWITCHING and self.state != self.TORNDOWN:
+                    if self.state != self.SWITCHING and self.state != self.TORNDOWN and self.scroll:
                         self.sendRtspRequest(self.PLAY, timeout='0')
                         data = self.recvRtspReply()
                         self.parseRtspReply(data)
                 
                 def srelease(event):
-                    if self.state != self.SWITCHING and self.state != self.TORNDOWN:
+                    if self.state != self.SWITCHING and self.state != self.TORNDOWN and self.scroll:
                         self.scroll = False
                         self.preview.destroy()
 
@@ -205,14 +240,17 @@ class Client:
                                 self.label.configure(image=photo, height=275)
                                 self.label.image = photo
 
-                self.scrollbar = Scale(self.master, from_=0, to=self.totalFrameNbr-1, length=self.master.winfo_width()*0.8, orient=HORIZONTAL, showvalue=0, sliderlength=15, activebackground="red", bg="gray", troughcolor="black")
+                self.scrollbar = Scale(self.master, from_=0, to=self.totalFrameNbr-1,
+                                       length=self.master.winfo_width()*0.8, orient=HORIZONTAL,
+                                       showvalue=0, sliderlength=15,
+                                       activebackground="red", bg="gray", troughcolor="black")
                 self.scrollbar["variable"] = self.frameNbr
                 # self.scrollbar.bind("<Button-1>", press)
                 # self.scrollbar.bind("<ButtonRelease-1>", release)
                 self.scrollbar.bind("<Button-1>", spress)
-                self.scrollbar.bind("<ButtonRelease-1>", srelease)
                 self.scrollbar["command"] = scroll
-                self.scrollbar.grid(row=1, column=0, columnspan=4, padx=2, pady=2)
+                self.scrollbar.bind("<ButtonRelease-1>", srelease)
+                self.scrollbar.grid(row=1, column=0, columnspan=5, padx=2, pady=2)
             elif self.state == self.SWITCHING:
                 self.scrollbar["variable"] = self.frameNbr
                 self.scrollbar.set(0)
@@ -221,6 +259,13 @@ class Client:
 
             self.state = self.READY
             self.interrupt.clear()
+            self.processingInterval = 0
+
+            # for the speed button
+            self.speedText.set(self.speedTexts[1])
+            self.oldSpeedText = self.speedTexts[1]
+            # Set the playback speed to normal
+            self.waitInterval = 0.05
 
     def describeMovie(self):
         """Describe function handler."""
@@ -237,13 +282,13 @@ class Client:
             self.rtpSocket = self.openRtpPort()
             data = self.recvRtspReply()
             if self.parseRtspReply(data):
-                self.state = self.PLAYING
                 # buttons' style
                 self.playPauseText.set(self.pauseText)
                 # Create a new thread and start receiving RTP packets
                 self.interrupt.clear()
                 self.worker = threading.Thread(target=self.listenRtp)
                 self.worker.start()
+                self.state = self.PLAYING
 
     def pauseMovie(self):
         """Pause button handler."""
@@ -252,16 +297,41 @@ class Client:
             self.sendRtspRequest(self.PAUSE)
             data = self.recvRtspReply()
             if self.parseRtspReply(data):
-                self.state = self.READY
                 # buttons' style
                 self.playPauseText.set(self.playText)
+                self.state = self.READY
 
-    def playPauseMovie(self):
-        """Play/Pause button handler."""
-        if self.playPauseText.get().startswith("Play"):
-            self.playMovie()
-        elif self.playPauseText.get().startswith("Pause"):
-            self.pauseMovie()
+    def playPauseMovie(self, event=''):
+        if self.playPause["state"] == NORMAL:
+            """Play/Pause button handler."""
+            if self.playPauseText.get().startswith("Play"):
+                self.playMovie()
+            elif self.playPauseText.get().startswith("Pause"):
+                self.pauseMovie()
+
+    def chooseMovie(self):
+        def finish():
+            if chosen.get() == -1:
+                tkinter.messagebox.showerror('Error', 'Please choose a movie!')
+                chooseMovie.lift()
+            else:
+                chooseMovie.destroy()
+
+        chooseMovie = Toplevel(self.master)
+        chooseMovie.protocol("WM_DELETE_WINDOW", finish)
+        label = Label(chooseMovie, text="Choose a movie:", anchor=W, width=15)
+        label.grid(row=0, column=0, padx=2, pady=2)
+        chosen = IntVar(value=-1)
+        for i in range(len(self.availableMovies)):
+            R = Radiobutton(chooseMovie, text=self.availableMovies[i].split('.')[0], variable=chosen, value=i, anchor=W, width=15)
+            R.grid(row=i+1, column=0, padx=2, pady=2)
+        # Create Done button
+        done = Button(chooseMovie, anchor=CENTER, padx=3, pady=3)
+        done["text"] = "Done"
+        done["command"] = finish
+        done.grid(row=i+2, column=0, padx=2, pady=2)
+
+        return chooseMovie, chosen
 
     def switchMovie(self):
         self.interrupt.set()
@@ -269,39 +339,25 @@ class Client:
         data = self.recvRtspReply()
         if self.parseRtspReply(data):
             # in case the user just choose the current movie
+            oldState = self.state
+            self.state = self.SWITCHING
 
             self.switch["state"] = DISABLED
             self.playPause["state"] = DISABLED
             self.scrollbar["state"] = DISABLED
+            self.speed["state"] = DISABLED
+            self.stop["state"] = DISABLED
             self.playPauseText.set(self.playText)
 
-            def finish():
-                if chosen.get() == -1:
-                    tkinter.messagebox.showerror('Error', 'Please choose a movie!')
-                    chooseMovie.lift()
-                else:
-                    chooseMovie.destroy()
-
-            chooseMovie = Toplevel(self.master)
-            chooseMovie.protocol("WM_DELETE_WINDOW", finish)
-            label = Label(chooseMovie, text="Choose a movie:", anchor=W, width=15)
-            label.grid(row=0, column=0, padx=2, pady=2)
-            chosen = IntVar(value=-1)
-            for i in range(len(self.availableMovies)):
-                R = Radiobutton(chooseMovie, text=self.availableMovies[i].split('.')[0], variable=chosen, value=i, anchor=W, width=15)
-                R.grid(row=i+1, column=0, padx=2, pady=2)
-            # Create Done button
-            done = Button(chooseMovie, anchor=CENTER, padx=3, pady=3)
-            done["text"] = "Done"
-            done["command"] = finish
-            done.grid(row=i+2, column=0, padx=2, pady=2)
+            chooseMovie, chosen = self.chooseMovie()
 
             self.master.wait_window(chooseMovie)
             self.switch["state"] = NORMAL
             self.playPause["state"] = NORMAL
             self.stop["state"] = NORMAL
             self.scrollbar["state"] = NORMAL
-            if self.state != self.TORNDOWN and self.fileName == self.availableMovies[chosen.get()]:
+            self.speed["state"] = NORMAL
+            if oldState != self.TORNDOWN and self.fileName == self.availableMovies[chosen.get()]:
                 tkinter.messagebox.showwarning('Same movie', 'You have chosen the same movie again!')
                 if self.state == self.PLAYING:
                     self.state = self.READY
@@ -310,7 +366,6 @@ class Client:
                     self.playMovie()
                     self.pauseMovie()
             else:
-                self.state = self.SWITCHING
                 self.fileName = self.availableMovies[chosen.get()]
                 self.master.title("Now streaming " + self.fileName + "...")
                 # SETUP is mandatory in an RTSP interaction
@@ -332,10 +387,27 @@ class Client:
                 self.playPause["state"] = DISABLED
                 self.stop["state"] = DISABLED
                 self.scrollbar["state"] = DISABLED
+                self.speed["state"] = DISABLED
+
+    def changeSpeedMovie(self, event):
+        if event != self.oldSpeedText:
+            self.sendRtspRequest(self.SPEED)
+            data = self.recvRtspReply()
+            if self.parseRtspReply(data):
+                self.oldSpeedText = event
+                self.waitInterval = 0.025 * 2**(self.speedTexts.index(event))
+            else: # there are some errors on server's side
+                self.speedText.set(self.oldSpeedText)
 
     def listenRtp(self):
         """Listen for RTP packets."""
-        while not self.interrupt.isSet():
+        while True:
+            if not self.scroll:
+                self.interrupt.wait(self.waitInterval - self.processingInterval/1000000000)
+            start = time.perf_counter_ns() # best possible precision
+
+            if self.interrupt.isSet():
+                break
             # assume stable network
             try:
                 data, _ = self.rtpSocket.recvfrom(1 << 16)
@@ -353,6 +425,10 @@ class Client:
             frame = packet.getPayload()
             #self.writeFrame(frame)
             self.updateMovie(frame)
+
+            # for better timing
+            self.processingInterval = 0.85*self.processingInterval - 0.15*start
+            self.processingInterval += 0.15*time.perf_counter_ns()
 
     def updateMovie(self, data):
         """Update the image file as video frame in the GUI."""
@@ -431,6 +507,11 @@ class Client:
             msg = 'CLOSE RTSP/1.0\n' +\
                   'CSeq: ' + str(self.rtspSeq) + '\n' +\
                   'Session: ' + str(self.sessionId)
+        elif requestCode == self.SPEED:
+            msg = 'SPEED RTSP/1.0\n' +\
+                  'CSeq: ' + str(self.rtspSeq) + '\n' +\
+                  'Session: ' + str(self.sessionId) + '\n' +\
+                  'Speed: ' + str(self.speedTexts.index(self.speedText.get()))
 
         if timeout:
             msg += '\nTimeout: ' + timeout
@@ -449,12 +530,6 @@ class Client:
         reply = [line.split(' ') for line in reply]
         if not self.sessionId:
             self.sessionId = int(reply[2][1])
-            # path name convention difference
-            # NO NEED TO WRITE TO FILES -> NO MORE HEADACHE
-            # if platform.system() == 'Windows':
-            #     self.imageFile = 'cache\\' + CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
-            # elif platform.system() == 'Linux':
-            #     self.imageFile = 'cache/' + CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
         #NOTE: close the connection if there are errors
         try:
             assert(reply[0][1] == '200')
@@ -492,7 +567,7 @@ class Client:
             self.rtpSocket.close()
             return self.openRtpPort(timeout)
 
-    def handler(self):
+    def handler(self, event=''):
         """Handler on explicitly closing the GUI window."""
         oldState = self.state
         self.pauseMovie()

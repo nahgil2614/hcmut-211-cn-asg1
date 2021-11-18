@@ -31,7 +31,7 @@ class Server:
 				# debug mode for local test
 				ServerWorkerLocal(clientInfo).run()
 			else:
-				# release mode with more robustness
+				# release mode with more robustness - like Twitch
 				ServerWorkerRemote(clientInfo).run()
 
 if __name__ == "__main__":

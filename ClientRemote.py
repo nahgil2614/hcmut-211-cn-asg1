@@ -127,10 +127,11 @@ class Client:
 
             if self.state == self.INIT:
                 # Create the scrollbar
-                def scroll(event):
+                def press(event):
                     if not self.TORNDOWN and self.scrollbar["state"] != DISABLED:
                         self.scrollbar["variable"] = 0
-                        self.scrollbar.set(self.frameNbr.get())
+                        # The scale's position
+                        self.scrollbar.set(min(self.totalFrameNbr-1, max(0, (event.x-self.scrollbar["sliderlength"]/2) / (self.scrollbar["length"]-self.scrollbar["sliderlength"]) * (self.totalFrameNbr-1))))
 
                 # return the control back to self.frameNbr
                 def release(event):
@@ -157,7 +158,7 @@ class Client:
 
                 self.scrollbar = Scale(self.master, from_=0, to=self.totalFrameNbr-1, length=self.label.winfo_width()*0.8, orient=HORIZONTAL, showvalue=0, sliderlength=15, activebackground="red", bg="gray", troughcolor="black")
                 self.scrollbar["variable"] = self.frameNbr
-                self.scrollbar.bind("<Button-1>", scroll)
+                self.scrollbar.bind("<Button-1>", press)
                 self.scrollbar.bind("<ButtonRelease-1>", release)
                 self.scrollbar.grid(row=1, column=0, columnspan=4, padx=2, pady=2)
             elif self.state == self.SWITCHING:
