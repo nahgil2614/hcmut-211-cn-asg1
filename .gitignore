@@ -1,1 +1,6 @@
-__pycache__/
+client/__pycache__/
+server/__pycache__/
+
+server/movies/cat.Mjpeg
+server/movies/jujutsuKaisen.Mjpeg
+server/movies/money.Mjpeg

@@ -30,6 +30,7 @@ class Client:
     SWITCH = 5
     CLOSE = 6
     SPEED = 7
+    ADD = 8
     
     # Initiation..
     def __init__(self, master, serveraddr, serverport, rtpport, filename):
@@ -82,7 +83,10 @@ class Client:
             oldState = self.state
             self.pauseMovie()
             self.frameNbr.set(self.frameNbr.get()+100)
-            if oldState == self.PLAYING:
+            if self.frameNbr.get() == self.totalFrameNbr-1:
+                # buttons' states
+                self.playPause["state"] = DISABLED
+            elif oldState == self.PLAYING:
                 self.playMovie()
 
         def backward5s(event):
@@ -255,7 +259,6 @@ class Client:
                 self.scrollbar["variable"] = self.frameNbr
                 self.scrollbar.set(0)
                 self.scrollbar["to"] = self.totalFrameNbr-1
-                #self.scrollbar["length"] = self.label.winfo_width()*0.8
 
             self.state = self.READY
             self.interrupt.clear()
@@ -309,6 +312,41 @@ class Client:
             elif self.playPauseText.get().startswith("Pause"):
                 self.pauseMovie()
 
+    def addYTVideo(self, chooseMovie): # assume only valid URL
+        def download():
+            self.sendRtspRequest(self.ADD)
+            data = self.recvRtspReply()
+            if self.parseRtspReply(data):
+                tkinter.messagebox.showinfo('Success', 'Your request has been sent sucessfully. Please wait for us to download it...')
+                chooseMovie.lift()
+                addVideo.destroy()
+
+        addVideo = Toplevel(chooseMovie)
+        addVideo.title('Add video')
+        addVideo.protocol("WM_DELETE_WINDOW", addVideo.destroy)
+        
+        label = Label(addVideo, text="Enter a YouTube video's URL:", anchor=W, width=50)
+        label.grid(row=0, column=0, padx=2, pady=2)
+
+        # user's input
+        self.url = StringVar()
+        inputBox = Entry(addVideo, exportselection=0, textvariable=self.url, width=50)
+        inputBox.grid(row=1, column=0, padx=2, pady=2)
+
+        label = Label(addVideo, text="Enter the file's name:", anchor=W, width=50)
+        label.grid(row=2, column=0, padx=2, pady=2)
+
+        # user's input
+        self.videoName = StringVar()
+        inputBox = Entry(addVideo, exportselection=0, textvariable=self.videoName, width=50)
+        inputBox.grid(row=3, column=0, padx=2, pady=2)
+
+        # Create Add button
+        add = Button(addVideo, anchor=CENTER, padx=3, pady=3)
+        add["text"] = "Add"
+        add["command"] = download
+        add.grid(row=4, column=0, padx=2, pady=2)
+
     def chooseMovie(self):
         def finish():
             if chosen.get() == -1:
@@ -318,18 +356,26 @@ class Client:
                 chooseMovie.destroy()
 
         chooseMovie = Toplevel(self.master)
-        chooseMovie.protocol("WM_DELETE_WINDOW", finish)
-        label = Label(chooseMovie, text="Choose a movie:", anchor=W, width=15)
+        chooseMovie.title('Choose movie')
+        chooseMovie.protocol("WM_DELETE_WINDOW", chooseMovie.destroy)
+        label = Label(chooseMovie, text="Choose a movie:", anchor=W, width=20)
         label.grid(row=0, column=0, padx=2, pady=2)
         chosen = IntVar(value=-1)
         for i in range(len(self.availableMovies)):
             R = Radiobutton(chooseMovie, text=self.availableMovies[i].split('.')[0], variable=chosen, value=i, anchor=W, width=15)
             R.grid(row=i+1, column=0, padx=2, pady=2)
+        
+        # Create Add button
+        add = Button(chooseMovie, anchor=N+E, padx=3)
+        add["text"] = "+"
+        add["command"] = lambda : self.addYTVideo(chooseMovie)
+        add.grid(row=i+2, column=0, padx=2, pady=2)
+
         # Create Done button
         done = Button(chooseMovie, anchor=CENTER, padx=3, pady=3)
         done["text"] = "Done"
         done["command"] = finish
-        done.grid(row=i+2, column=0, padx=2, pady=2)
+        done.grid(row=i+3, column=0, padx=2, pady=2)
 
         return chooseMovie, chosen
 
@@ -357,12 +403,15 @@ class Client:
             self.stop["state"] = NORMAL
             self.scrollbar["state"] = NORMAL
             self.speed["state"] = NORMAL
-            if oldState != self.TORNDOWN and self.fileName == self.availableMovies[chosen.get()]:
+
+            if oldState != self.TORNDOWN and chosen.get() != -1 and self.fileName == self.availableMovies[chosen.get()]:
                 tkinter.messagebox.showwarning('Same movie', 'You have chosen the same movie again!')
-                if self.state == self.PLAYING:
-                    self.state = self.READY
+                chosen.set(-1)
+            if chosen.get() == -1: # do not choose anything
+                self.state = self.READY
+                if oldState == self.PLAYING:
                     self.playMovie()
-                elif self.state == self.READY:
+                elif oldState == self.READY:
                     self.playMovie()
                     self.pauseMovie()
             else:
@@ -379,10 +428,10 @@ class Client:
             data = self.recvRtspReply()
             if self.parseRtspReply(data):
                 if self.state == self.PLAYING:
+                    # close the socket
                     self.interrupt.set()
-                    self.rtpSocket.settimeout(0.001)
-                    self.rtpSocket.shutdown(socket.SHUT_RDWR) # stop `recvfrom` function in `listenRtp` => would trigger self.rtpSocket.close()
-                    self.worker.join()
+                    self.openRtpPort(timeout=0)
+                    #self.worker.join() # it will join eventually (?)
                 self.state = self.TORNDOWN
                 self.playPause["state"] = DISABLED
                 self.stop["state"] = DISABLED
@@ -512,6 +561,12 @@ class Client:
                   'CSeq: ' + str(self.rtspSeq) + '\n' +\
                   'Session: ' + str(self.sessionId) + '\n' +\
                   'Speed: ' + str(self.speedTexts.index(self.speedText.get()))
+        elif requestCode == self.ADD:
+            msg = 'ADD RTSP/1.0\n' +\
+                  'CSeq: ' + str(self.rtspSeq) + '\n' +\
+                  'Session: ' + str(self.sessionId) + '\n' +\
+                  'URL: ' + self.url.get() + '\n' +\
+                  'Name: ' + self.videoName.get()
 
         if timeout:
             msg += '\nTimeout: ' + timeout
@@ -572,11 +627,14 @@ class Client:
         oldState = self.state
         self.pauseMovie()
         if tkinter.messagebox.askyesno("Quit", "Do you want to quit?"):
-            self.sendRtspRequest(self.CLOSE)
-            data = self.recvRtspReply()
-            if self.parseRtspReply(data):
-                self.rtspSocket.close()
-                self.master.destroy()
+            try:
+                self.sendRtspRequest(self.CLOSE)
+                data = self.recvRtspReply()
+                if self.parseRtspReply(data):
+                    self.rtspSocket.close()
+            except: # if the rtsp socket has been disconnected
+                pass
+            self.master.destroy()
         elif oldState == self.PLAYING:
             self.playMovie()
 
