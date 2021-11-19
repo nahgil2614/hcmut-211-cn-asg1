@@ -453,6 +453,7 @@ class Client:
         while True:
             if not self.scroll:
                 self.interrupt.wait(self.waitInterval - self.processingInterval/1000000000)
+          
             start = time.perf_counter_ns() # best possible precision
 
             if self.interrupt.isSet():

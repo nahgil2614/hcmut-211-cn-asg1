@@ -58,7 +58,7 @@ class Youtube2Mjpeg:
         quality = 95
         while True:
             maxSize = max([os.stat(self.path+'\\frames\\'+str(i)+'.jpg').st_size for i in range(self.totalFrameNbr)])
-            if maxSize < (1 << 16):
+            if maxSize < (1 << 16): # max size for a UDP datagram
                 break
 
             quality -= 5

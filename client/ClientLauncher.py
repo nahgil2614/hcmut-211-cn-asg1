@@ -1,7 +1,6 @@
 import sys, socket
 from tkinter import Tk
-from ClientLocal import Client as ClientLocal
-from ClientRemote import Client as ClientRemote
+from Client import Client
 
 if __name__ == "__main__":
 	try:
@@ -17,16 +16,7 @@ if __name__ == "__main__":
 	root.config(background="white")
 	
 	# Create a new client
-	s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-	s.connect((serverAddr, int(serverPort)))
-	myAddr = s.getsockname()[0]
-	s.close()
-	if serverAddr == 'localhost' or serverAddr == '127.0.0.1' or serverAddr == myAddr:
-		# debug mode for local test - like YouTube on desktop
-		app = ClientLocal(root, serverAddr, serverPort, rtpPort, fileName)
-	else:
-		# release mode with more robustness - like YouTube on mobile, or Twitch
-		app = ClientRemote(root, serverAddr, serverPort, rtpPort, fileName)
+	app = Client(root, serverAddr, serverPort, rtpPort, fileName)
 	
 	app.master.title("Now streaming " + fileName + "...")
 	root.mainloop()
