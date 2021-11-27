@@ -39,6 +39,10 @@ class ServerWorker:
         # exponentially decaying average of sending interval's length
         # for dynamically adapt the sending rate for better timing
         self.processingInterval = 0
+        # to calculate packet lost
+        self.sentNo = 0
+        # to calculate video data rate (B/s)
+        self.dataRate = 0
         
     def run(self):
         threading.Thread(target=self.recvRtspRequest).start()
@@ -212,8 +216,16 @@ class ServerWorker:
             print("processing ADD\n")
             url = request[3].split(' ')[1]
             videoName = request[4].split(' ')[1]
-            Youtube2Mjpeg(url, videoName, self.clientInfo['session']).run()
-            self.replyRtsp(self.OK_200, seq[1])
+
+            # wait for valid/invalid link msg
+            noticeEvent = threading.Event()
+            invalidLinkEvent = threading.Event()
+            Youtube2Mjpeg(url, videoName, self.clientInfo['session']).run(noticeEvent, invalidLinkEvent)
+            noticeEvent.wait()
+            if invalidLinkEvent.isSet():
+                self.replyRtsp(self.FILE_NOT_FOUND_404, seq[1])
+            else:
+                self.replyRtsp(self.OK_200, seq[1])
             
     def sendRtp(self, num):
         """Send RTP packets over UDP."""
@@ -241,9 +253,14 @@ class ServerWorker:
                     num += 1
                 except:
                     print("Connection Error")
+                else: # packet sent successfully
+                    self.sentNo += 1
             #NOTE: end the finished video
             else:
                 break
+
+            # calculate the video data rate
+            self.dataRate = 0.85*self.dataRate + 0.15*(len(data) / self.waitInterval)
 
             # for better timing
             self.processingInterval = 0.85*self.processingInterval - 0.15*start
@@ -268,6 +285,8 @@ class ServerWorker:
                     self.clientInfo['rtpSocket'].sendto(self.makeRtp(data, self.scrollFrameNbr),(address,port))
                 except:
                     print("Connection Error")
+                else: # packet sent successfully
+                    self.sentNo += 1
             #NOTE: end the finished video
             else:
                 break
@@ -299,7 +318,7 @@ class ServerWorker:
                     'CSeq: ' + seq + '\n' +\
                     'Session: ' + str(self.clientInfo['session'])
             if describe:
-                reply += '\nDescription: <kinds_of_streams> <encoding>'
+                reply += f'\nDescription: RTP/UDP+RTSP/TCP UTF-8 {self.sentNo} {self.dataRate}'
             elif info[0]:
                 reply += '\nInfo: ' + str(info[0]) + ' ' + str(info[1][0]) + ' ' + str(info[1][1])
             elif switch:

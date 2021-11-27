@@ -43,7 +43,7 @@ class Client:
             self.pauseText = 'Pause ⏸'
             self.switchText = 'Switch 💩'
             self.stopText = 'Stop ■'
-        elif platform.system() == 'Linux': # linux host having font issue
+        else: # linux host having font issue
             self.describeText = 'Describe'
             self.playText = 'Play'
             self.pauseText = 'Pause'
@@ -68,8 +68,8 @@ class Client:
         self.createWidgets()
         self.rtspSeq = 0
         self.sessionId = 0
-        self.requestSent = -1 #NOTE: what is it?
-        self.teardownAcked = 0 #NOTE: what is it?
+        self.requestSent = 0
+        self.teardownAcked = 0
         self.connectToServer()
         # width and height of the video
         self.width = 0
@@ -78,6 +78,10 @@ class Client:
         self.setupMovie()
         # for the scrollbar
         self.scroll = False
+        # to calculate packet lost rate
+        self.receivedNo = 0
+        # to handle invalid youtube link
+        self.adding = False
 
         def forward5s(event):
             oldState = self.state
@@ -313,17 +317,25 @@ class Client:
                 self.pauseMovie()
 
     def addYTVideo(self, chooseMovie): # assume only valid URL
+        self.adding = True
         def download():
             self.sendRtspRequest(self.ADD)
             data = self.recvRtspReply()
             if self.parseRtspReply(data):
                 tkinter.messagebox.showinfo('Success', 'Your request has been sent sucessfully. Please wait for us to download it...')
-                chooseMovie.lift()
-                addVideo.destroy()
+            else:
+                tkinter.messagebox.showerror('Error', 'The YouTube link is invalid! Please try again later.')
+            chooseMovie.lift()
+            addVideo.destroy()
+            self.adding = False
+
+        def close():
+            addVideo.destroy()
+            self.adding = False
 
         addVideo = Toplevel(chooseMovie)
         addVideo.title('Add video')
-        addVideo.protocol("WM_DELETE_WINDOW", addVideo.destroy)
+        addVideo.protocol("WM_DELETE_WINDOW", close)
         
         label = Label(addVideo, text="Enter a YouTube video's URL:", anchor=W, width=50)
         label.grid(row=0, column=0, padx=2, pady=2)
@@ -422,6 +434,7 @@ class Client:
 
     def stopMovie(self): # WHAT'S THE LOGIC???
         """Stop button handler."""
+        self.teardownAcked += 1
         # This command stop the current movie
         if self.state != self.TORNDOWN and (self.state == self.READY or self.state == self.PLAYING):
             self.sendRtspRequest(self.TEARDOWN) # for the server to close the movie file
@@ -465,6 +478,8 @@ class Client:
             except: # timeout
                 self.rtpSocket.close()
                 break
+            else: # receive a packet
+                self.receivedNo += 1
 
             # take less than 0.05 sec to process this
             # packet received sucessfully
@@ -578,6 +593,7 @@ class Client:
         """Receive RTSP reply from the server."""
         data = self.rtspSocket.recv(2048).decode()
         print("Response received: " + data)
+        self.requestSent += 1
         return data
     
     def parseRtspReply(self, data):
@@ -592,13 +608,17 @@ class Client:
             assert(int(reply[1][1]) == self.rtspSeq)
             assert(int(reply[2][1]) == self.sessionId)
         except:
-            self.rtspSocket.close()
+            if not self.adding:
+                self.rtspSocket.close()
             return False
 
         if len(reply) == 4:
             if reply[3][0] == 'Description:':
-                msg = 'Stream types: ' + reply[3][1] + '\n'\
-                      'Encoding: ' + reply[3][2]
+                sentNo = int(reply[3][3])
+                msg = 'Stream types: ' + reply[3][1] + '\n' +\
+                      'Encoding: ' + reply[3][2] + '\n' +\
+                      f'Packets: Sent = {sentNo}, Received = {self.receivedNo}, Lost = {sentNo-self.receivedNo} ({round((sentNo-self.receivedNo)/sentNo,2)}% loss)\n' +\
+                      f'Data rate: {round(float(reply[3][4]),2)} B/s'
                 tkinter.messagebox.showinfo('Session description', msg)
             elif reply[3][0] == 'Info:':
                 self.totalFrameNbr = int(reply[3][1])

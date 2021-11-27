@@ -9,21 +9,28 @@ class Youtube2Mjpeg:
         self.fileName = fileName
         self.path = '.\\tmp\\' + str(session)
 
-    def run(self):
-        threading.Thread(target=self.process).start()
+    def run(self, noticeEvent, invalidLinkEvent):
+        threading.Thread(target=self.process, args=(noticeEvent, invalidLinkEvent)).start()
 
-    def process(self):        
-        self.download()
-        os.mkdir(self.path+'\\frames')
-        self.totalFrameNbr = self.mp4ToJpg()
-        self.resizeJpg()
-        self.changeQuality()
-        self.makeMjpeg()
-        self.collectGarbage()
+    def process(self, noticeEvent, invalidLinkEvent):        
+        self.download(noticeEvent, invalidLinkEvent)
+        if not invalidLinkEvent.isSet():
+            os.mkdir(self.path+'\\frames')
+            self.totalFrameNbr = self.mp4ToJpg()
+            self.resizeJpg()
+            self.changeQuality()
+            self.makeMjpeg()
+            self.collectGarbage()
 
-    def download(self):
+    def download(self, noticeEvent, invalidLinkEvent):
         yt = YouTube(self.url)
-        video = yt.streams.get_highest_resolution()
+        try:
+            video = yt.streams.get_highest_resolution()
+        except:
+            invalidLinkEvent.set()
+            noticeEvent.set()
+            return
+        noticeEvent.set()
         video.download(self.path, filename=self.fileName+'.mp4')
 
     def mp4ToJpg(self):
