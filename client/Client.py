@@ -191,7 +191,8 @@ class Client:
                             self.playMovie()
                             self.pauseMovie()
 
-                        self.rtpSocket = self.openRtpPort(None)
+                        #self.rtpSocket = self.openRtpPort(None)
+                        self.interrupt.set()
                         self.interrupt.clear()
                         self.worker = threading.Thread(target=self.listenRtp)
                         self.worker.start()
@@ -224,9 +225,9 @@ class Client:
 
                         # close the socket
                         self.interrupt.set()
-                        self.rtpSocket.settimeout(0.001)
-                        self.rtpSocket.shutdown(socket.SHUT_RDWR) # stop `recvfrom` function in `listenRtp` => would trigger self.rtpSocket.close()
-                        self.rtpSocket.close()
+                        #self.rtpSocket.settimeout(0.001)
+                        #self.rtpSocket.shutdown(socket.SHUT_RDWR) # stop `recvfrom` function in `listenRtp` => would trigger self.rtpSocket.close()
+                        #self.rtpSocket.close()
 
                         # buttons' states
                         if self.playPause["state"] == DISABLED:
@@ -309,11 +310,12 @@ class Client:
                 self.state = self.READY
 
     def playPauseMovie(self, event=''):
-        if self.playPause["state"] == NORMAL:
+        print(self.playPause['state'])
+        if self.playPause['state'] != DISABLED:
             """Play/Pause button handler."""
-            if self.playPauseText.get().startswith("Play"):
+            if self.playPauseText.get() == self.playText:
                 self.playMovie()
-            elif self.playPauseText.get().startswith("Pause"):
+            elif self.playPauseText.get() == self.pauseText:
                 self.pauseMovie()
 
     def addYTVideo(self, chooseMovie): # assume only valid URL
@@ -443,7 +445,6 @@ class Client:
                 if self.state == self.PLAYING:
                     # close the socket
                     self.interrupt.set()
-                    self.openRtpPort(timeout=0)
                     #self.worker.join() # it will join eventually (?)
                 self.state = self.TORNDOWN
                 self.playPause["state"] = DISABLED
@@ -470,6 +471,8 @@ class Client:
             start = time.perf_counter_ns() # best possible precision
 
             if self.interrupt.isSet():
+                print("broken dude")
+                self.rtpSocket.close()
                 break
             # assume stable network
             try:
@@ -586,7 +589,7 @@ class Client:
 
         if timeout:
             msg += '\nTimeout: ' + timeout
-
+        
         self.rtspSocket.send(msg.encode())
 
     def recvRtspReply(self):
@@ -633,15 +636,25 @@ class Client:
         """Open RTP socket binded to a specified port."""
         # Create a new datagram socket to receive RTP packets from the server
         rtpSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            rtpSocket.bind(('', self.rtpPort)) # only exception at this point
-            # Set the timeout value of the socket to 0.5sec
-            rtpSocket.settimeout(timeout)
-            return rtpSocket
-        except: # socket already in use
-            self.rtpSocket.shutdown(socket.SHUT_RDWR) # stop `recvfrom` function in `listenRtp` => would trigger self.rtpSocket.close()
-            self.rtpSocket.close()
-            return self.openRtpPort(timeout)
+        cont = True
+        while cont:
+            exc = False
+            try:
+                rtpSocket.bind(('', self.rtpPort)) # only exception at this point
+                # Set the timeout value of the socket to 0.5sec
+                rtpSocket.settimeout(timeout)
+            except: # socket already in use
+                exc = True
+            else:
+                cont = False
+            
+            if exc:
+                try:
+                    #self.rtpSocket.shutdown(socket.SHUT_RDWR) # stop `recvfrom` function in `listenRtp` => would trigger self.rtpSocket.close()
+                    self.rtpSocket.close()
+                except:
+                    pass
+        return rtpSocket
 
     def handler(self, event=''):
         """Handler on explicitly closing the GUI window."""
