@@ -81,7 +81,7 @@ class ServerWorker:
                     self.framePos.clear()
                     self.framePos = [0]
                 try:
-                    video = VideoStream('movies\\' + filename)
+                    video = VideoStream('movies/' + filename)
                     # retrieve the size
                     size, data = video.getSize()
                     # calculate the total number of frames
@@ -90,7 +90,7 @@ class ServerWorker:
                         data = video.nextFrame()
 
                     totalFrameNbr = video.frameNbr()
-                    self.clientInfo['videoStream'] = VideoStream('movies\\' + filename)
+                    self.clientInfo['videoStream'] = VideoStream('movies/' + filename)
                 except IOError:
                     self.replyRtsp(self.FILE_NOT_FOUND_404, seq[1])
                     #NOTE: close the connection when there are errors

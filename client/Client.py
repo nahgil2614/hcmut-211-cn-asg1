@@ -43,7 +43,7 @@ class Client:
             self.pauseText = 'Pause ⏸'
             self.switchText = 'Switch 💩'
             self.stopText = 'Stop ■'
-        else: # linux host having font issue
+        elif platform.system() == 'Linux': # linux host having font issue
             self.describeText = 'Describe'
             self.playText = 'Play'
             self.pauseText = 'Pause'
@@ -617,7 +617,7 @@ class Client:
                 sentNo = int(reply[3][3])
                 msg = 'Stream types: ' + reply[3][1] + '\n' +\
                       'Encoding: ' + reply[3][2] + '\n' +\
-                      f'Packets: Sent = {sentNo}, Received = {self.receivedNo}, Lost = {sentNo-self.receivedNo} ({round((sentNo-self.receivedNo)/sentNo,2)}% loss)\n' +\
+                      f'Packets: Sent = {sentNo}, Received = {self.receivedNo}, Lost = {sentNo-self.receivedNo} ({0 if sentNo == 0 else round((sentNo-self.receivedNo)/sentNo,2)}% loss)\n' +\
                       f'Data rate: {round(float(reply[3][4]),2)} B/s'
                 tkinter.messagebox.showinfo('Session description', msg)
             elif reply[3][0] == 'Info:':
